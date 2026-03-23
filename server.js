@@ -85,7 +85,83 @@ app.post("/status", (req, res) => {
   res.sendStatus(200);
 });
 
-app.get("/", (req, res) => res.send("Kodi Voice Bridge running"));
+
+const path = require("path");
+
+// Serve the dashboard frontend
+app.use(express.static(path.join(__dirname, "public")));
+
+// ── Dashboard API ─────────────────────────────────────────────────────────────
+
+// GET /api/items — list all CallLog records
+app.get("/api/items", async (req, res) => {
+  try {
+    const r = await fetch(BASE44_API_BASE + "?sort=-created_date&limit=300", {
+      headers: { "api_key": BASE44_API_KEY },
+    });
+    const data = await r.json();
+    res.json(Array.isArray(data) ? data : (data.items || []));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/items/:id — update a CallLog record
+app.put("/api/items/:id", async (req, res) => {
+  try {
+    const r = await fetch(BASE44_API_BASE + "/" + req.params.id, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "api_key": BASE44_API_KEY },
+      body: JSON.stringify(req.body),
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/chat — proxy to OpenAI chat completions
+app.post("/api/chat", async (req, res) => {
+  try {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + OPENAI_API_KEY },
+      body: JSON.stringify({ model: "gpt-4o-mini", messages: req.body.messages, max_tokens: 300 }),
+    });
+    const d = await r.json();
+    const reply = d.choices?.[0]?.message?.content || "No response.";
+    res.json({ reply });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/send-sms — send SMS via Twilio
+app.post("/api/send-sms", async (req, res) => {
+  try {
+    const { to, body } = req.body;
+    const msg = await twilioClient.messages.create({ to, from: TWILIO_PHONE_NUMBER, body });
+    res.json({ success: true, sid: msg.sid });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/whatsapp-team — send WhatsApp to all leaders
+app.post("/api/whatsapp-team", async (req, res) => {
+  const { message } = req.body;
+  const TEAM = ["+61428049389","+61405266508","+61407633409","+61466373308","+61423448605"];
+  const results = await Promise.allSettled(TEAM.map(to =>
+    twilioClient.messages.create({ to: "whatsapp:" + to, from: "whatsapp:" + TWILIO_PHONE_NUMBER, body: message })
+  ));
+  res.json({ sent: results.filter(r=>r.status==="fulfilled").length });
+});
+
+// Catch-all: serve index.html for any non-API route
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
 
 wss.on("connection", (twilioWs) => {
   console.log("Twilio WebSocket connected");
