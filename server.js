@@ -187,7 +187,8 @@ wss.on("connection", (twilioWs) => {
 
   function connectToOpenAI() {
     openAiWs = new WebSocket(
-      "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
+      "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime",
+      undefined,
       {
         headers: {
           Authorization: "Bearer " + OPENAI_API_KEY,
@@ -352,8 +353,8 @@ wss.on("connection", (twilioWs) => {
       }
     });
 
-    openAiWs.on("close", () => {
-      console.log("OpenAI WS closed");
+    openAiWs.on("close", (code, reason) => {
+      console.log("OpenAI WS closed - code: " + code + ", reason: " + (reason ? reason.slice(0, 100) : "none"));
       if (transcript.length > 0 && callerNumber && !savedByTool) {
         console.log("Fallback save triggered - tool was not called");
         fetch(BASE44_API_BASE, {
@@ -373,7 +374,9 @@ wss.on("connection", (twilioWs) => {
       }
     });
 
-    openAiWs.on("error", function(e) { console.error("OpenAI WS error:", e); });
+    openAiWs.on("error", function(e) { 
+      console.error("OpenAI WS error:", e.message || e); 
+    });
   }
 
   twilioWs.on("message", (data) => {
