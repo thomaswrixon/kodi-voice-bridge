@@ -17,7 +17,7 @@ const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const BASE44_API_KEY = process.env.BASE44_API_KEY || "";
-const BASE44_APP_ID = "69bd9e4f4d346842bfeb2c45";
+const BASE44_APP_ID = process.env.BASE44_APP_ID || "69bd9e4f4d346842bfeb2c45";
 const BASE44_API_BASE = "https://kodi-bfeb2c45.base44.app/api/apps/" + BASE44_APP_ID + "/entities/CallLog";
 const BASE_URL = process.env.BASE_URL || "https://your-app.railway.app";
 
@@ -83,6 +83,10 @@ app.post("/call-tommy", async (req, res) => {
 app.post("/status", (req, res) => {
   console.log("Call status:", req.body.CallStatus, req.body.CallSid);
   res.sendStatus(200);
+});
+
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "healthy" });
 });
 
 
