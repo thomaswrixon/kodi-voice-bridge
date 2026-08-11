@@ -88,6 +88,12 @@ app.post("/status", (req, res) => {
 
 const path = require("path");
 
+// Health check endpoint — must be registered before the static middleware
+// so it short-circuits the catch-all route and never touches the filesystem.
+app.get("/health", (req, res) => {
+  res.status(200).json({ ok: true });
+});
+
 // Serve the dashboard frontend
 app.use(express.static(path.join(__dirname, "public")));
 
