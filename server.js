@@ -187,7 +187,7 @@ wss.on("connection", (twilioWs) => {
 
   function connectToOpenAI() {
     openAiWs = new WebSocket(
-      "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime",
+      "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-2024-12-17",
       undefined,
       {
         headers: {
@@ -373,7 +373,11 @@ wss.on("connection", (twilioWs) => {
     });
 
     openAiWs.on("error", function(e) { 
-      console.error("OpenAI WS error:", e.message || e); 
+      const errorMessage = e.message || JSON.stringify(e);
+      console.error("OpenAI WS error:", errorMessage);
+      if (e.code || e.statusCode) {
+        console.error("Error code:", e.code || e.statusCode);
+      }
     });
   }
 
