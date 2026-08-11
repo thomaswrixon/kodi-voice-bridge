@@ -202,16 +202,29 @@ wss.on("connection", (twilioWs) => {
       openAiWs.send(JSON.stringify({
         type: "session.update",
         session: {
-          modalities: ["audio", "text"],
-          voice: "shimmer",
+          type: "realtime",
+          output_modalities: ["audio"],
           instructions: KODI_SYSTEM_PROMPT,
-          input_audio_format: "g711_ulaw",
-          output_audio_format: "g711_ulaw",
-          turn_detection: {
-            type: "server_vad",
-            threshold: 0.5,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 700,
+          audio: {
+            input: {
+              format: {
+                type: "g711_ulaw",
+                rate: 24000,
+              },
+              turn_detection: {
+                type: "server_vad",
+                threshold: 0.5,
+                prefix_padding_ms: 300,
+                silence_duration_ms: 700,
+              },
+            },
+            output: {
+              format: {
+                type: "g711_ulaw",
+                rate: 24000,
+              },
+              voice: "shimmer",
+            },
           },
           tools: [
             {
@@ -267,7 +280,7 @@ wss.on("connection", (twilioWs) => {
     openAiWs.on("message", async (data) => {
       const msg = JSON.parse(data.toString());
 
-      if (msg.type === "response.audio.delta" && msg.delta) {
+      if (msg.type === "response.output_audio.delta" && msg.delta) {
         twilioWs.send(JSON.stringify({
           event: "media",
           streamSid: streamSid,
