@@ -192,7 +192,6 @@ wss.on("connection", (twilioWs) => {
       {
         headers: {
           Authorization: "Bearer " + OPENAI_API_KEY,
-          "OpenAI-Beta": "realtime=v1",
         },
       }
     );
@@ -208,7 +207,6 @@ wss.on("connection", (twilioWs) => {
           instructions: KODI_SYSTEM_PROMPT,
           input_audio_format: "g711_ulaw",
           output_audio_format: "g711_ulaw",
-          input_audio_transcription: { model: "whisper-1" },
           turn_detection: {
             type: "server_vad",
             threshold: 0.5,
