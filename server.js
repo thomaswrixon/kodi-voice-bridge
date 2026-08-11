@@ -291,10 +291,13 @@ wss.on("connection", (twilioWs) => {
       const msg = JSON.parse(data.toString());
 
       if (msg.type === "response.output_audio.delta" && msg.delta) {
+        // msg.delta is raw binary mulaw from OpenAI; Twilio expects base64-encoded string
+        const base64Payload = Buffer.from(msg.delta, "binary").toString("base64");
+        console.log("[AUDIO_DELTA] Sent " + base64Payload.length + " base64 chars to Twilio (streamSid: " + streamSid + ")");
         twilioWs.send(JSON.stringify({
           event: "media",
           streamSid: streamSid,
-          media: { payload: msg.delta },
+          media: { payload: base64Payload },
         }));
       }
 
@@ -397,10 +400,9 @@ wss.on("connection", (twilioWs) => {
 
     openAiWs.on("error", function(e) { 
       const errorMessage = e.message || JSON.stringify(e);
-      console.error("OpenAI WS error:", errorMessage);
-      if (e.code || e.statusCode) {
-        console.error("Error code:", e.code || e.statusCode);
-      }
+      console.error("[SESSION_ERROR] OpenAI session error: " + errorMessage);
+      if (e.code) console.error("[SESSION_ERROR] Code: " + e.code);
+      if (e.statusCode) console.error("[SESSION_ERROR] HTTP: " + e.statusCode);
     });
   }
 
