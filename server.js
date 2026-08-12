@@ -267,6 +267,8 @@ wss.on("connection", (twilioWs) => {
         },
       }));
 
+      console.log("OpenAI session configured: output format=g711_ulaw rate=8000 voice=shimmer");
+
       const greetingPrompt = direction === "outbound"
         ? "The call just connected to Tommy. Give him the morning briefing greeting."
         : "The call just connected. The caller's phone number is " + callerNumber + ". Start with your greeting now.";
@@ -291,12 +293,22 @@ wss.on("connection", (twilioWs) => {
       const msg = JSON.parse(data.toString());
 
       if (msg.type === "response.output_audio.delta" && msg.delta) {
+        console.log("OpenAI event: response.output_audio.delta");
+        console.log("Response audio base64 length: " + msg.delta.length + " bytes");
+        try {
+          const decodedPrefix = Buffer.from(msg.delta, "base64").slice(0, 6).toString("hex");
+          console.log("Decoded audio prefix (hex): " + decodedPrefix);
+        } catch (hexErr) {
+          console.error("Failed to decode audio prefix:", hexErr.message);
+        }
+        console.log("Twilio media event: event=media streamSid=" + streamSid + " payloadLength=" + msg.delta.length);
         twilioWs.send(JSON.stringify({
           event: "media",
           streamSid: streamSid,
           media: { payload: msg.delta },
         }));
       }
+
 
       if (msg.type === "conversation.item.input_audio_transcription.completed") {
         transcript.push({ role: "user", content: msg.transcript });
@@ -421,6 +433,7 @@ wss.on("connection", (twilioWs) => {
 
     if (msg.event === "media") {
       const payload = msg.media.payload;
+      console.log("Twilio inbound media: payloadLength=" + (payload ? payload.length : 0));
       if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
         openAiWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: payload }));
       } else {
