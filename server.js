@@ -420,11 +420,13 @@ wss.on("connection", (twilioWs) => {
     }
 
     if (msg.event === "media") {
-      const payload = msg.media.payload;
+      const binaryPayload = msg.media.payload;
+      // Twilio sends raw binary audio; OpenAI expects base64
+      const base64Payload = Buffer.from(binaryPayload, "binary").toString("base64");
       if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
-        openAiWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: payload }));
+        openAiWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: base64Payload }));
       } else {
-        audioBuffer.push(payload);
+        audioBuffer.push(base64Payload);
       }
     }
 
