@@ -128,7 +128,7 @@ async function lookupJobSchedule(args) {
   if (response.status === 404 || (body.error && body.error.code === "NO_MATCH")) {
     return { status: "not_found", message: "No matching LCM job was found." };
   }
-  if (!response.ok) return { status: "lookup_error", message: "LCM lookup failed safely." };
+  if (!response.ok) return { status: "lookup_error", http_status: response.status, error_code: body?.error?.code || "", message: "LCM lookup failed safely." };
 
   const jobs = Array.isArray(body.jobs) ? body.jobs : [];
   if (!jobs.length) return { status: "not_found", message: "No matching LCM job was found." };
