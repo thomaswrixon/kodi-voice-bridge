@@ -17,8 +17,8 @@ const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const BASE44_API_KEY = process.env.BASE44_API_KEY || "";
-const BASE44_APP_ID = process.env.BASE44_APP_ID || "69bd9e4f4d346842bfeb2c45";
-const BASE44_API_BASE = "https://kodi-bfeb2c45.base44.app/api/apps/" + BASE44_APP_ID + "/entities/CallLog";
+const BASE44_APP_ID = process.env.BASE44_APP_ID || "69c1bcc966e03d26bd89d178";
+const BASE44_API_BASE = "https://base44.app/api/apps/" + BASE44_APP_ID + "/entities/CallLog";
 const BASE_URL = process.env.BASE_URL || "https://your-app.railway.app";
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -151,11 +151,6 @@ app.post("/status", (req, res) => {
   res.sendStatus(200);
 });
 
-app.get("/health", (req, res) => {
-  res.status(200).json({ status: "healthy" });
-});
-
-
 const path = require("path");
 
 // Health check endpoint — must be registered before the static middleware
@@ -287,6 +282,7 @@ wss.on("connection", (twilioWs) => {
                 type: "g711_ulaw",
                 rate: 8000,
               },
+              transcription: { model: "gpt-4o-mini-transcribe" },
               turn_detection: {
                 type: "server_vad",
                 threshold: 0.5,
@@ -393,7 +389,7 @@ wss.on("connection", (twilioWs) => {
       if (msg.type === "conversation.item.input_audio_transcription.completed") {
         transcript.push({ role: "user", content: msg.transcript });
       }
-      if (msg.type === "response.audio_transcript.done") {
+      if (msg.type === "response.output_audio_transcript.done") {
         transcript.push({ role: "assistant", content: msg.transcript });
       }
 
