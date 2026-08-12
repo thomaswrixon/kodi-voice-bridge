@@ -23,6 +23,72 @@ const BASE_URL = process.env.BASE_URL || "https://your-app.railway.app";
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
+// ── PCM16 → G.711 μ-law codec ─────────────────────────────────────────────────
+// OpenAI Realtime GA ignores the requested "g711_ulaw" output format and always
+// sends response.output_audio.delta as base64-encoded PCM16 (linear 16-bit
+// signed, little-endian) audio, typically at 24kHz. Twilio Media Streams only
+// accept 8kHz G.711 μ-law, so we must resample and re-encode before forwarding.
+
+const MULAW_BIAS = 0x84;
+const MULAW_CLIP = 32635;
+
+// Encode a single 16-bit PCM sample to a G.711 μ-law byte.
+function linearToMulawSample(sample) {
+  let sign = (sample >> 8) & 0x80;
+  if (sign !== 0) sample = -sample;
+  if (sample > MULAW_CLIP) sample = MULAW_CLIP;
+  sample = sample + MULAW_BIAS;
+
+  let exponent = 7;
+  for (let expMask = 0x4000; (sample & expMask) === 0 && exponent > 0; expMask >>= 1) {
+    exponent--;
+  }
+
+  const mantissa = (sample >> (exponent + 3)) & 0x0f;
+  const ulawByte = ~(sign | (exponent << 4) | mantissa) & 0xff;
+  return ulawByte;
+}
+
+// Simple linear-interpolation resampler for 16-bit PCM sample arrays.
+function resamplePcm16(samples, inputRate, outputRate) {
+  if (inputRate === outputRate) return samples;
+
+  const ratio = inputRate / outputRate;
+  const outputLength = Math.floor(samples.length / ratio);
+  const result = new Int16Array(outputLength);
+
+  for (let i = 0; i < outputLength; i++) {
+    const srcIndex = i * ratio;
+    const indexFloor = Math.floor(srcIndex);
+    const indexCeil = Math.min(indexFloor + 1, samples.length - 1);
+    const frac = srcIndex - indexFloor;
+    result[i] = Math.round(samples[indexFloor] * (1 - frac) + samples[indexCeil] * frac);
+  }
+
+  return result;
+}
+
+// Convert a Buffer of raw PCM16 (LE) audio at inputSampleRate into a Buffer of
+// G.711 μ-law bytes at 8kHz, resampling only if the input isn't already 8kHz.
+function pcm16ToG711Ulaw(pcm16Buffer, inputSampleRate) {
+  const sampleCount = Math.floor(pcm16Buffer.length / 2);
+  const pcmSamples = new Int16Array(sampleCount);
+  for (let i = 0; i < sampleCount; i++) {
+    pcmSamples[i] = pcm16Buffer.readInt16LE(i * 2);
+  }
+
+  const resampled = inputSampleRate === 8000
+    ? pcmSamples
+    : resamplePcm16(pcmSamples, inputSampleRate, 8000);
+
+  const ulawBuffer = Buffer.alloc(resampled.length);
+  for (let i = 0; i < resampled.length; i++) {
+    ulawBuffer[i] = linearToMulawSample(resampled[i]);
+  }
+
+  return ulawBuffer;
+}
+
 const KODI_SYSTEM_PROMPT = `You are Kodi, the AI receptionist for Local Concreting Mate (LCM), a residential concreting business in the Hunter Valley and Newcastle area of Australia. The owner is Tommy Wrixon.
 
 YOUR CALL FLOW FOR INBOUND CALLS:
@@ -302,11 +368,25 @@ wss.on("connection", (twilioWs) => {
           console.error("Failed to decode audio prefix:", hexErr.message);
         }
         console.log("Twilio media event: event=media streamSid=" + streamSid + " payloadLength=" + msg.delta.length);
-        twilioWs.send(JSON.stringify({
-          event: "media",
-          streamSid: streamSid,
-          media: { payload: msg.delta },
-        }));
+        try {
+          // OpenAI Realtime GA's PCM16 output defaults to 24kHz regardless of
+          // the requested g711_ulaw/8000 session config.
+          const pcm16Binary = Buffer.from(msg.delta, "base64");
+          const g711Binary = pcm16ToG711Ulaw(pcm16Binary, 24000);
+          const g711Base64 = g711Binary.toString("base64");
+
+          // Chunk into ~160 byte segments (20ms @ 8kHz, 1 byte/sample)
+          for (let i = 0; i < g711Base64.length; i += 220) {
+            const chunk = g711Base64.slice(i, i + 220);
+            twilioWs.send(JSON.stringify({
+              event: "media",
+              streamSid: streamSid,
+              media: { payload: chunk },
+            }));
+          }
+        } catch (convErr) {
+          console.error("Audio conversion failed:", convErr.message);
+        }
       }
 
 
