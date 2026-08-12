@@ -291,10 +291,13 @@ wss.on("connection", (twilioWs) => {
       const msg = JSON.parse(data.toString());
 
       if (msg.type === "response.output_audio.delta" && msg.delta) {
+        // msg.delta is base64-encoded g711_ulaw from OpenAI
+        // Decode to binary for Twilio Media Streams
+        const binaryPayload = Buffer.from(msg.delta, "base64").toString("binary");
         twilioWs.send(JSON.stringify({
           event: "media",
           streamSid: streamSid,
-          media: { payload: msg.delta },
+          media: { payload: binaryPayload },
         }));
       }
 
