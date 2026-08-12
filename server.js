@@ -40,8 +40,30 @@ async function lookupJobSchedule(args) {
   }
 
   const searchTerm = String(args.search_term || "").trim();
-  const address = String(args.address || "").trim();
+  let address = String(args.address || "").trim();
+  let suburb = "";
   const jobNumber = String(args.job_number || "").trim();
+
+  if (address) {
+    const commaIndex = address.lastIndexOf(",");
+    if (commaIndex >= 0) {
+      suburb = address.slice(commaIndex + 1).trim();
+      address = address.slice(0, commaIndex).trim();
+    }
+  }
+
+  if (!suburb && address && searchTerm) {
+    const commaIndex = searchTerm.lastIndexOf(",");
+    if (commaIndex >= 0) {
+      const searchAddress = searchTerm.slice(0, commaIndex).trim();
+      const searchSuburb = searchTerm.slice(commaIndex + 1).trim();
+      if (!searchAddress || normaliseSearch(searchAddress) === normaliseSearch(address)) {
+        suburb = searchSuburb;
+      }
+    } else if (!/\d/.test(searchTerm) && normaliseSearch(searchTerm) !== normaliseSearch(address)) {
+      suburb = searchTerm;
+    }
+  }
 
   if (!searchTerm && !address && !jobNumber) {
     return { status: "need_more_detail", message: "Ask for the suburb, full address, or job number." };
@@ -49,14 +71,21 @@ async function lookupJobSchedule(args) {
 
   const query = { limit: 20 };
   if (jobNumber) query.job_number = jobNumber;
-  if (address) {
-    query.address = address;
-    if (searchTerm && normaliseSearch(searchTerm) !== normaliseSearch(address)) {
+  if (address) query.address = address;
+  if (suburb) query.suburb = suburb;
+
+  if (!address && searchTerm) {
+    if (/\d/.test(searchTerm)) {
+      const commaIndex = searchTerm.lastIndexOf(",");
+      if (commaIndex >= 0) {
+        query.address = searchTerm.slice(0, commaIndex).trim();
+        query.suburb = searchTerm.slice(commaIndex + 1).trim();
+      } else {
+        query.address = searchTerm;
+      }
+    } else {
       query.suburb = searchTerm;
     }
-  } else if (searchTerm) {
-    if (/\d/.test(searchTerm)) query.address = searchTerm;
-    else query.suburb = searchTerm;
   }
 
   const response = await fetch(LCM_LOOKUP_URL, {
