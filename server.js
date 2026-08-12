@@ -19,6 +19,8 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const BASE44_API_KEY = process.env.BASE44_API_KEY || "";
 const BASE44_APP_ID = process.env.BASE44_APP_ID || "69c1bcc966e03d26bd89d178";
+const LCM_LOOKUP_URL = process.env.LCM_LOOKUP_URL || "";
+const LCM_LOOKUP_SECRET = process.env.LCM_LOOKUP_SECRET || "";
 const BASE44_ENTITIES_BASE = "https://base44.app/api/apps/" + BASE44_APP_ID + "/entities";
 const BASE44_API_BASE = BASE44_ENTITIES_BASE + "/CallLog";
 const BASE_URL = process.env.BASE_URL || "https://your-app.railway.app";
@@ -32,92 +34,94 @@ function normaliseSearch(value) {
     .trim();
 }
 
-async function listBase44Entities(entityName, params) {
-  const query = new URLSearchParams(params || {});
-  const url = BASE44_ENTITIES_BASE + "/" + entityName + (query.toString() ? "?" + query.toString() : "");
-  const response = await fetch(url, { headers: { api_key: BASE44_API_KEY } });
-  const body = await response.json();
-  if (!response.ok) {
-    throw new Error("Base44 " + entityName + " lookup failed: " + response.status + " " + JSON.stringify(body));
-  }
-  return Array.isArray(body) ? body : (body.items || body.entities || []);
-}
-
 async function lookupJobSchedule(args) {
-  const searchTerm = normaliseSearch(args.search_term);
-  const addressTerm = normaliseSearch(args.address);
-  const jobNumberTerm = normaliseSearch(args.job_number);
-  const queryTerms = [searchTerm, addressTerm, jobNumberTerm].filter(Boolean);
+  if (!LCM_LOOKUP_URL || !LCM_LOOKUP_SECRET) {
+    throw new Error("LCM_LOOKUP_URL or LCM_LOOKUP_SECRET is missing");
+  }
 
-  if (queryTerms.length === 0) {
+  const searchTerm = String(args.search_term || "").trim();
+  const address = String(args.address || "").trim();
+  const jobNumber = String(args.job_number || "").trim();
+
+  if (!searchTerm && !address && !jobNumber) {
     return { status: "need_more_detail", message: "Ask for the suburb, full address, or job number." };
   }
 
-  const jobs = await listBase44Entities("Job", { limit: "500" });
-  let matches = jobs.filter(function(job) {
-    const haystack = normaliseSearch([
-      job.job_number,
-      job.builder_no,
-      job.lot_no,
-      job.address,
-      job.suburb,
-      job.state,
-      job.post_code,
-    ].filter(Boolean).join(" "));
-    return queryTerms.every(function(term) { return haystack.includes(term); });
+  const query = { limit: 20 };
+  if (jobNumber) query.job_number = jobNumber;
+  if (address) {
+    query.address = address;
+    if (searchTerm && normaliseSearch(searchTerm) !== normaliseSearch(address)) {
+      query.suburb = searchTerm;
+    }
+  } else if (searchTerm) {
+    if (/\d/.test(searchTerm)) query.address = searchTerm;
+    else query.suburb = searchTerm;
+  }
+
+  const response = await fetch(LCM_LOOKUP_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Kodi-Shared-Secret": LCM_LOOKUP_SECRET,
+    },
+    body: JSON.stringify({ action: "searchJobs", query: query }),
   });
 
-  // A suburb-only request should focus on live work, not completed historical jobs.
-  if (!addressTerm && !jobNumberTerm) {
-    const activeMatches = matches.filter(function(job) { return job.status !== "Closed"; });
-    if (activeMatches.length > 0) matches = activeMatches;
+  const bodyText = await response.text();
+  let body;
+  try {
+    body = bodyText ? JSON.parse(bodyText) : {};
+  } catch (error) {
+    throw new Error("LCM lookup returned invalid JSON");
   }
 
-  if (matches.length === 0) {
+  if (response.status === 404 && body && body.error && body.error.code === "NO_MATCH") {
     return { status: "not_found", message: "No matching LCM job was found." };
   }
+  if (!response.ok) {
+    throw new Error("LCM lookup failed: " + response.status + " " + bodyText.slice(0, 500));
+  }
 
-  if (matches.length > 1) {
+  const jobs = Array.isArray(body.jobs) ? body.jobs : [];
+  if (jobs.length === 0) {
+    return { status: "not_found", message: "No matching LCM job was found." };
+  }
+  if (jobs.length > 1) {
     return {
       status: "multiple_matches",
       message: "Ask the caller for the full address or job number.",
-      matches: matches.slice(0, 10).map(function(job) {
+      matches: jobs.slice(0, 10).map(function(job) {
         return {
-          job_number: job.job_number,
-          builder_number: job.builder_no,
+          job_number: job.job_number || "",
           address: [job.address, job.suburb].filter(Boolean).join(", "),
-          status: job.status,
         };
       }),
     };
   }
 
-  const job = matches[0];
-  const activities = await listBase44Entities("Activity", { job_id: job.id, limit: "200" });
-  const jobActivities = activities.filter(function(activity) { return activity.job_id === job.id; });
-  const pour = jobActivities.find(function(activity) {
-    return normaliseSearch(activity.title) === "pour concrete";
-  }) || jobActivities.find(function(activity) {
-    return normaliseSearch(activity.title).includes("pour");
-  });
+  const job = jobs[0];
+  const activities = (Array.isArray(job.labour_activities) ? job.labour_activities : [])
+    .map(function(activity) {
+      return {
+        name: activity.title || "",
+        calendar_date: activity.calendar_date || null,
+      };
+    })
+    .filter(function(activity) {
+      return activity.name && activity.calendar_date;
+    });
 
   return {
     status: "single_match",
     job: {
-      job_number: job.job_number,
-      builder_number: job.builder_no,
-      address: [job.address, job.suburb, job.state, job.post_code].filter(Boolean).join(", "),
-      status: job.status,
+      job_number: job.job_number || "",
+      address: [job.address, job.suburb].filter(Boolean).join(", "),
     },
-    pour: pour ? {
-      date: pour.calendar_start_date || null,
-      time: pour.calendar_start_time || null,
-      estimated_date: pour.estimated_start_date || null,
-      completed_date: pour.completed_date || null,
-    } : null,
-    message: pour && pour.calendar_start_date
-      ? "Confirmed pour date found."
-      : "The job was found, but no confirmed pour date is recorded.",
+    activities: activities,
+    message: activities.length
+      ? "Confirmed activity dates found."
+      : "The job was found, but no confirmed Labour Allocation dates are recorded.",
   };
 }
 
