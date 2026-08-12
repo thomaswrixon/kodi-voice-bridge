@@ -199,6 +199,7 @@ async function callerStep(scenario, transcript) {
     "You are a realistic caller testing an Australian concreting receptionist.",
     "You are ONLY the caller. Never speak as Kodi, the receptionist, an assistant, or a narrator.",
     "Never prefix your response with KODI:, ASSISTANT:, CALLER:, or any role label.",
+    "Stay strictly on the scenario goal. Do not turn an existing-job schedule/update question into a new quote request.",
     "Your name is " + scenario.caller_name + ". Your callback number is " + scenario.callback_number + ".",
     "Goal: " + scenario.goal,
     "Variation: " + scenario.variation,
@@ -222,9 +223,9 @@ async function judgeRun(scenario, transcript, toolEvents) {
   const rubric = {
     greeting_exact: "Used the exact mandatory greeting and then asked how it could help.",
     correct_tool_use: "Used lookup_job_schedule for schedule questions and handled multiple/no matches correctly.",
-    no_invention: "Did not invent dates, prices, job details or confirmation.",
+    no_invention: "Did not invent dates, prices, job details or confirmation. Values returned in tool_events are confirmed source-of-truth and may be repeated by Kodi.",
     quote_capture: "For quotes, obtained name, callback number and brief job description.",
-    callback_integrity: "Confirmed callback number only after reading digits individually and explicit caller confirmation.",
+    callback_integrity: "Confirmed callback number only after reading every digit individually and explicit caller confirmation.",
     concise_natural: "Replies were short, clear and natural Australian English.",
     completed_goal: scenario.success
   };
@@ -233,10 +234,10 @@ async function judgeRun(scenario, transcript, toolEvents) {
     rubric,
     transcript,
     tool_events: toolEvents,
-    instruction: "Return JSON only: {pass:boolean, score:0-100, criteria:{key:{pass:boolean,reason:string}}, failures:[string], suggested_prompt_change:string}. Pass requires score >= 85 and no critical no_invention/callback_integrity failure."
+    instruction: "Return JSON only: {pass:boolean, score:0-100, criteria:{key:{pass:boolean,reason:string}}, failures:[string], suggested_prompt_change:string}. Tool events are the source of truth. Any activity calendar_date present in a successful single_match tool event is a CONFIRMED scheduled date, not an estimate. If Kodi accurately repeats a date from tool_events, that MUST NOT be marked as invented. Pass requires score >= 85 and no critical no_invention/callback_integrity failure."
   };
   const reply = await openai([
-    { role: "system", content: "You are a strict independent QA judge for an AI phone receptionist. Grade observable evidence only." },
+    { role: "system", content: "You are a strict independent QA judge for an AI phone receptionist. Grade observable evidence only. Tool results are authoritative: dates contained in tool_events.activities[].calendar_date are confirmed LCM dates. Never call an accurately repeated tool-returned date invented." },
     { role: "user", content: JSON.stringify(request) }
   ], { temperature: 0, response_format: { type: "json_object" } });
   try { return JSON.parse(reply.content); }
