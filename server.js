@@ -219,7 +219,7 @@ wss.on("connection", (twilioWs) => {
             input: {
               format: {
                 type: "g711_ulaw",
-                rate: 24000,
+                rate: 8000,
               },
               turn_detection: {
                 type: "server_vad",
@@ -231,7 +231,7 @@ wss.on("connection", (twilioWs) => {
             output: {
               format: {
                 type: "g711_ulaw",
-                rate: 24000,
+                rate: 8000,
               },
               voice: "shimmer",
             },
@@ -400,6 +400,9 @@ wss.on("connection", (twilioWs) => {
       console.error("OpenAI WS error:", errorMessage);
       if (e.code || e.statusCode) {
         console.error("Error code:", e.code || e.statusCode);
+      }
+      if (!e.message) {
+        console.error("OpenAI WS error missing message:", e);
       }
     });
   }
