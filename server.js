@@ -279,10 +279,13 @@ wss.on("connection", (twilioWs) => {
           audio: {
             input: {
               format: {
-                type: "g711_ulaw",
-                rate: 8000,
+                type: "audio/pcmu",
               },
-              transcription: { model: "gpt-4o-mini-transcribe" },
+              transcription: {
+                model: "gpt-4o-mini-transcribe",
+                language: "en",
+                prompt: "Australian English phone call for Local Concreting Mate. Expected names include Tommy and Kodi.",
+              },
               turn_detection: {
                 type: "server_vad",
                 threshold: 0.5,
