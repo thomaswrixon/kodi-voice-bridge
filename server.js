@@ -17,10 +17,14 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
-const BASE44_API_KEY = process.env.BASE44_API_KEY || "";
-const BASE44_APP_ID = process.env.BASE44_APP_ID || "69c1bcc966e03d26bd89d178";
-const BASE44_ENTITIES_BASE = "https://base44.app/api/apps/" + BASE44_APP_ID + "/entities";
-const BASE44_API_BASE = BASE44_ENTITIES_BASE + "/CallLog";
+// Kodi and LCM are separate Base44 apps and require separate connections.
+const KODI_BASE44_API_KEY = process.env.BASE44_API_KEY || "";
+const KODI_BASE44_APP_ID = process.env.BASE44_APP_ID || "69c1bcc966e03d26bd89d178";
+const LCM_BASE44_API_KEY = process.env.LCM_BASE44_API_KEY || "";
+const LCM_BASE44_APP_ID = process.env.LCM_BASE44_APP_ID || "695080d2d131b2b3610531de";
+const KODI_ENTITIES_BASE = "https://base44.app/api/apps/" + KODI_BASE44_APP_ID + "/entities";
+const LCM_ENTITIES_BASE = "https://base44.app/api/apps/" + LCM_BASE44_APP_ID + "/entities";
+const BASE44_API_BASE = KODI_ENTITIES_BASE + "/CallLog";
 const BASE_URL = process.env.BASE_URL || "https://your-app.railway.app";
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -34,8 +38,11 @@ function normaliseSearch(value) {
 
 async function listBase44Entities(entityName, params) {
   const query = new URLSearchParams(params || {});
-  const url = BASE44_ENTITIES_BASE + "/" + entityName + (query.toString() ? "?" + query.toString() : "");
-  const response = await fetch(url, { headers: { api_key: BASE44_API_KEY } });
+  if (!LCM_BASE44_API_KEY) {
+    throw new Error("LCM_BASE44_API_KEY is missing");
+  }
+  const url = LCM_ENTITIES_BASE + "/" + entityName + (query.toString() ? "?" + query.toString() : "");
+  const response = await fetch(url, { headers: { api_key: LCM_BASE44_API_KEY } });
   const body = await response.json();
   if (!response.ok) {
     throw new Error("Base44 " + entityName + " lookup failed: " + response.status + " " + JSON.stringify(body));
@@ -242,7 +249,7 @@ app.use(express.static(path.join(__dirname, "public")));
 app.get("/api/items", async (req, res) => {
   try {
     const r = await fetch(BASE44_API_BASE + "?sort=-created_date&limit=300", {
-      headers: { "api_key": BASE44_API_KEY },
+      headers: { "api_key": KODI_BASE44_API_KEY },
     });
     const data = await r.json();
     res.json(Array.isArray(data) ? data : (data.items || []));
@@ -256,7 +263,7 @@ app.put("/api/items/:id", async (req, res) => {
   try {
     const r = await fetch(BASE44_API_BASE + "/" + req.params.id, {
       method: "PUT",
-      headers: { "Content-Type": "application/json", "api_key": BASE44_API_KEY },
+      headers: { "Content-Type": "application/json", "api_key": KODI_BASE44_API_KEY },
       body: JSON.stringify(req.body),
     });
     const data = await r.json();
@@ -521,7 +528,7 @@ wss.on("connection", (twilioWs) => {
             try {
               const saveRes = await fetch(BASE44_API_BASE, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", "api_key": BASE44_API_KEY },
+                headers: { "Content-Type": "application/json", "api_key": KODI_BASE44_API_KEY },
                 body: JSON.stringify({
                   call_sid: callSid || "",
                   caller_number: callerNumber || "unknown",
@@ -536,7 +543,7 @@ wss.on("connection", (twilioWs) => {
               const saveJson = await saveRes.json();
               console.log("Save response status: " + saveRes.status);
               console.log("Save response body: " + JSON.stringify(saveJson));
-              console.log("API key present: " + (BASE44_API_KEY ? "yes len=" + BASE44_API_KEY.length : "NO - MISSING"));
+              console.log("API key present: " + (KODI_BASE44_API_KEY ? "yes len=" + KODI_BASE44_API_KEY.length : "NO - MISSING"));
               if (saveJson.id) {
                 console.log("Caller info saved for " + (fnArgs.name || "unknown") + " id=" + saveJson.id);
                 savedByTool = true;
@@ -585,7 +592,7 @@ wss.on("connection", (twilioWs) => {
         console.log("Fallback save triggered - tool was not called");
         fetch(BASE44_API_BASE, {
           method: "POST",
-          headers: { "Content-Type": "application/json", "api_key": BASE44_API_KEY },
+          headers: { "Content-Type": "application/json", "api_key": KODI_BASE44_API_KEY },
           body: JSON.stringify({
             call_sid: callSid || "",
             caller_number: callerNumber || "unknown",
