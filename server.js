@@ -3,6 +3,7 @@ const express = require("express");
 const { createServer } = require("http");
 const { WebSocketServer, WebSocket } = require("ws");
 const twilio = require("twilio");
+const { KODI_SYSTEM_PROMPT } = require("./kodi-prompt");
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -89,30 +90,6 @@ function pcm16ToG711Ulaw(pcm16Buffer, inputSampleRate) {
   return ulawBuffer;
 }
 
-const KODI_SYSTEM_PROMPT = `You are Kodi, the AI receptionist for Local Concreting Mate (LCM), a residential concreting business in the Hunter Valley and Newcastle area of Australia. The owner is Tommy Wrixon.
-
-YOUR CALL FLOW FOR INBOUND CALLS:
-Step 1. Greet: "Kodi speaking, Tommy is not available right now. Can I ask who is calling?"
-Step 2. Once you have their name, ask why they are calling.
-Step 3. Once you have the reason, say: "And I have your number here as [read each digit individually with a pause, e.g. 0-4-2-8-0-4-9-3-8-9. NEVER say the number as a whole word like a million or billion - always individual digits]. Is that the best number for Tommy to call you back on?"
-Step 4. If they confirm yes, say "Perfect." If they give a different number, update it.
-Step 5. Say: "Brilliant, I will pass that straight on to Tommy. Have a good one."
-Step 6. YOU MUST call save_caller_info NOW. This is mandatory. Do not say goodbye first. Do not hang up first. Call the function immediately.
-Step 7. Only AFTER save_caller_info has returned a result, call hang_up.
-
-CRITICAL: save_caller_info MUST be called on every single inbound call before hang_up. No exceptions. Even if the caller hangs up early, call save_caller_info with whatever information you have.
-
-FOR CALLS WITH TOMMY (outbound):
-1. Greet: "Morning Tommy, it is Kodi. Ready when you are."
-2. Run through briefing items, answer questions, give business insights.
-
-SERVICES: concrete driveways (plain, exposed aggregate, coloured, stencilled), paths, slabs, decorative concrete, kerbing, pool surrounds. Service area: Hunter Valley and Newcastle, NSW.
-
-RULES:
-- Never say the word mate
-- Never use contractions - say "I will" not "I'll", "do not" not "don't", "that is" not "that's"
-- SHORT responses, one or two sentences max. This is a phone call.
-- Never quote prices - always defer to Tommy for quotes.`;
 
 app.post("/inbound", (req, res) => {
   const callSid = req.body.CallSid || "unknown";
@@ -297,7 +274,7 @@ wss.on("connection", (twilioWs) => {
               format: {
                 type: "audio/pcmu",
               },
-              voice: "shimmer",
+              voice: "cedar",
             },
           },
           tools: [
@@ -331,7 +308,7 @@ wss.on("connection", (twilioWs) => {
         },
       }));
 
-      console.log("OpenAI session configured: output format=g711_ulaw rate=8000 voice=shimmer");
+      console.log("OpenAI session configured: output format=g711_ulaw rate=8000 voice=cedar");
 
       const greetingPrompt = direction === "outbound"
         ? "The call just connected to Tommy. Give him the morning briefing greeting."
