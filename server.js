@@ -411,7 +411,7 @@ wss.on("connection", (twilioWs) => {
             {
               type: "function",
               name: "lookup_job_schedule",
-              description: "Search the live LCM app for jobs and their Pour Concrete activity. Use this for any caller asking about a job, schedule, activity, or pour date. If multiple matches are returned, ask for the full address or job number and call this tool again.",
+              description: "Search the live LCM app for a job and all confirmed Labour Allocation activity dates. Use this for customer or supplier questions about schedules, site start, Formwork, Sand Up, Drains, Pod and Steel, Pour Concrete, delivery timing, or job readiness. If multiple jobs are returned, ask for the full address or job number and call this tool again.",
               parameters: {
                 type: "object",
                 properties: {
