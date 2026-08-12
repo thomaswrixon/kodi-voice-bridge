@@ -40,24 +40,35 @@ async function lookupJobSchedule(args) {
     throw new Error("LCM_LOOKUP_URL or LCM_LOOKUP_SECRET is missing");
   }
 
-  const requestBody = {
-    search_term: String(args.search_term || "").trim(),
-    address: String(args.address || "").trim(),
-    job_number: String(args.job_number || "").trim(),
-  };
+  const searchTerm = String(args.search_term || "").trim();
+  const address = String(args.address || "").trim();
+  const jobNumber = String(args.job_number || "").trim();
 
-  if (!requestBody.search_term && !requestBody.address && !requestBody.job_number) {
+  if (!searchTerm && !address && !jobNumber) {
     return { status: "need_more_detail", message: "Ask for the suburb, full address, or job number." };
+  }
+
+  const query = { limit: 20 };
+  if (jobNumber) query.job_number = jobNumber;
+  if (address) {
+    query.address = address;
+    if (searchTerm && normaliseSearch(searchTerm) !== normaliseSearch(address)) {
+      query.suburb = searchTerm;
+    }
+  } else if (searchTerm) {
+    // A term containing a street number is treated as an address; otherwise
+    // it is treated as a suburb so "Belmont North" finds every matching job.
+    if (/\d/.test(searchTerm)) query.address = searchTerm;
+    else query.suburb = searchTerm;
   }
 
   const response = await fetch(LCM_LOOKUP_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-lcm-secret": LCM_LOOKUP_SECRET,
-      "Authorization": "Bearer " + LCM_LOOKUP_SECRET,
+      "X-Kodi-Shared-Secret": LCM_LOOKUP_SECRET,
     },
-    body: JSON.stringify(requestBody),
+    body: JSON.stringify({ action: "searchJobs", query: query }),
   });
 
   const bodyText = await response.text();
@@ -68,22 +79,53 @@ async function lookupJobSchedule(args) {
     throw new Error("LCM lookup returned invalid JSON");
   }
 
+  if (response.status === 404 && body && body.error && body.error.code === "NO_MATCH") {
+    return { status: "not_found", message: "No matching LCM job was found." };
+  }
   if (!response.ok) {
     throw new Error("LCM lookup failed: " + response.status + " " + bodyText.slice(0, 500));
   }
 
-  const result = body.data || body.result || body;
-  if (result.status === "single_match" && Array.isArray(result.activities)) {
-    result.activities = result.activities.map(function(activity) {
+  const jobs = Array.isArray(body.jobs) ? body.jobs : [];
+  if (jobs.length === 0) {
+    return { status: "not_found", message: "No matching LCM job was found." };
+  }
+  if (jobs.length > 1) {
+    return {
+      status: "multiple_matches",
+      message: "Ask the caller for the full address or job number.",
+      matches: jobs.slice(0, 10).map(function(job) {
+        return {
+          job_number: job.job_number || "",
+          address: [job.address, job.suburb].filter(Boolean).join(", "),
+        };
+      }),
+    };
+  }
+
+  const job = jobs[0];
+  const activities = (Array.isArray(job.labour_activities) ? job.labour_activities : [])
+    .map(function(activity) {
       return {
-        name: activity.name || activity.title || activity.activity_name || "",
-        calendar_date: activity.calendar_date || activity.calendar_start_date || activity.date || null,
+        name: activity.title || "",
+        calendar_date: activity.calendar_date || null,
       };
-    }).filter(function(activity) {
+    })
+    .filter(function(activity) {
       return activity.name && activity.calendar_date;
     });
-  }
-  return result;
+
+  return {
+    status: "single_match",
+    job: {
+      job_number: job.job_number || "",
+      address: [job.address, job.suburb].filter(Boolean).join(", "),
+    },
+    activities: activities,
+    message: activities.length
+      ? "Confirmed activity dates found."
+      : "The job was found, but no confirmed Labour Allocation dates are recorded.",
+  };
 }
 
 // ── PCM16 → G.711 μ-law codec ─────────────────────────────────────────────────
