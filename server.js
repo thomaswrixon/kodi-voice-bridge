@@ -34,6 +34,14 @@ function normaliseSearch(value) {
     .trim();
 }
 
+function toAustralianLocalNumber(value) {
+  const raw = String(value || "").trim();
+  const compact = raw.replace(/[^+\d]/g, "");
+  if (/^\+61\d+$/.test(compact)) return "0" + compact.slice(3);
+  if (/^61\d+$/.test(compact)) return "0" + compact.slice(2);
+  return compact || raw;
+}
+
 async function lookupJobSchedule(args) {
   if (!LCM_LOOKUP_URL || !LCM_LOOKUP_SECRET) {
     throw new Error("LCM_LOOKUP_URL or LCM_LOOKUP_SECRET is missing");
@@ -154,16 +162,9 @@ async function lookupJobSchedule(args) {
   };
 }
 
-// ── PCM16 → G.711 μ-law codec ─────────────────────────────────────────────────
-// OpenAI Realtime GA ignores the requested "g711_ulaw" output format and always
-// sends response.output_audio.delta as base64-encoded PCM16 (linear 16-bit
-// signed, little-endian) audio, typically at 24kHz. Twilio Media Streams only
-// accept 8kHz G.711 μ-law, so we must resample and re-encode before forwarding.
-
 const MULAW_BIAS = 0x84;
 const MULAW_CLIP = 32635;
 
-// Encode a single 16-bit PCM sample to a G.711 μ-law byte.
 function linearToMulawSample(sample) {
   let sign = (sample >> 8) & 0x80;
   if (sign !== 0) sample = -sample;
@@ -180,7 +181,6 @@ function linearToMulawSample(sample) {
   return ulawByte;
 }
 
-// Simple linear-interpolation resampler for 16-bit PCM sample arrays.
 function resamplePcm16(samples, inputRate, outputRate) {
   if (inputRate === outputRate) return samples;
 
@@ -199,8 +199,6 @@ function resamplePcm16(samples, inputRate, outputRate) {
   return result;
 }
 
-// Convert a Buffer of raw PCM16 (LE) audio at inputSampleRate into a Buffer of
-// G.711 μ-law bytes at 8kHz, resampling only if the input isn't already 8kHz.
 function pcm16ToG711Ulaw(pcm16Buffer, inputSampleRate) {
   const sampleCount = Math.floor(pcm16Buffer.length / 2);
   const pcmSamples = new Int16Array(sampleCount);
@@ -219,7 +217,6 @@ function pcm16ToG711Ulaw(pcm16Buffer, inputSampleRate) {
 
   return ulawBuffer;
 }
-
 
 app.post("/inbound", (req, res) => {
   const callSid = req.body.CallSid || "unknown";
@@ -260,18 +257,12 @@ app.post("/status", (req, res) => {
 
 const path = require("path");
 
-// Health check endpoint — must be registered before the static middleware
-// so it short-circuits the catch-all route and never touches the filesystem.
 app.get("/health", (req, res) => {
   res.status(200).json({ ok: true });
 });
 
-// Serve the dashboard frontend
 app.use(express.static(path.join(__dirname, "public")));
 
-// ── Dashboard API ─────────────────────────────────────────────────────────────
-
-// GET /api/items — list all CallLog records
 app.get("/api/items", async (req, res) => {
   try {
     const r = await fetch(BASE44_API_BASE + "?sort=-created_date&limit=300", {
@@ -284,7 +275,6 @@ app.get("/api/items", async (req, res) => {
   }
 });
 
-// PUT /api/items/:id — update a CallLog record
 app.put("/api/items/:id", async (req, res) => {
   try {
     const r = await fetch(BASE44_API_BASE + "/" + req.params.id, {
@@ -299,7 +289,6 @@ app.put("/api/items/:id", async (req, res) => {
   }
 });
 
-// POST /api/chat — proxy to OpenAI chat completions
 app.post("/api/chat", async (req, res) => {
   try {
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -315,7 +304,6 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-// POST /api/send-sms — send SMS via Twilio
 app.post("/api/send-sms", async (req, res) => {
   try {
     const { to, body } = req.body;
@@ -326,7 +314,6 @@ app.post("/api/send-sms", async (req, res) => {
   }
 });
 
-// POST /api/whatsapp-team — send WhatsApp to all leaders
 app.post("/api/whatsapp-team", async (req, res) => {
   const { message } = req.body;
   const TEAM = ["+61428049389","+61405266508","+61407633409","+61466373308","+61423448605"];
@@ -336,7 +323,6 @@ app.post("/api/whatsapp-team", async (req, res) => {
   res.json({ sent: results.filter(r=>r.status==="fulfilled").length });
 });
 
-// Catch-all: serve index.html for any non-API route
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
@@ -425,13 +411,13 @@ wss.on("connection", (twilioWs) => {
             {
               type: "function",
               name: "save_caller_info",
-              description: "MANDATORY: Save caller name, reason, and callback number. You MUST call this on every inbound call before hang_up. Call it immediately after saying goodbye.",
+              description: "MANDATORY: Save caller name, reason, and callback number. You MUST call this on every inbound call before hang_up. Use the inbound caller ID as the default callback number when available, confirm it by reading it back digit by digit, and only ask for a different number if caller ID is unavailable or the caller requests another number.",
               parameters: {
                 type: "object",
                 properties: {
                   name: { type: "string", description: "Callers name" },
                   reason: { type: "string", description: "Reason for calling" },
-                  callback_number: { type: "string", description: "Confirmed callback number" },
+                  callback_number: { type: "string", description: "Confirmed callback number in local Australian format where possible, for example 04xxxxxxxx" },
                   notes: { type: "string", description: "Relevant details only. Never claim the callback number was confirmed unless the caller explicitly confirmed it." },
                   callback_number_confirmed: { type: "boolean", description: "True only when Kodi read the number digit by digit and the caller explicitly confirmed it." },
                 },
@@ -455,9 +441,10 @@ wss.on("connection", (twilioWs) => {
 
       console.log("OpenAI session configured: output format=g711_ulaw rate=8000 voice=cedar");
 
+      const localCallerNumber = toAustralianLocalNumber(callerNumber);
       const greetingPrompt = direction === "outbound"
         ? "The call just connected to Tommy. Give him the morning briefing greeting."
-        : "The call just connected. The caller's phone number is " + callerNumber + ". Start with your greeting now.";
+        : "The call just connected. The inbound caller ID callback number is " + localCallerNumber + ". Use this number as the default callback number. Do not ask the caller to provide their phone number unless caller ID is unavailable/private/unknown or they want to use a different number. If a callback is needed, read this local-format number back digit by digit, beginning with 0 rather than +61, and ask the caller to confirm it. Start with your greeting now.";
 
       openAiWs.send(JSON.stringify({
         type: "conversation.item.create",
@@ -499,8 +486,6 @@ wss.on("connection", (twilioWs) => {
         }
         console.log("Twilio media event: event=media streamSid=" + streamSid + " payloadLength=" + msg.delta.length);
         try {
-          // The session requests PCMU, which is Twilio's native 8 kHz mu-law
-          // format. Forward the base64 audio bytes unchanged.
           twilioWs.send(JSON.stringify({
             event: "media",
             streamSid: streamSid,
@@ -510,7 +495,6 @@ wss.on("connection", (twilioWs) => {
           console.error("Audio forwarding failed:", forwardErr.message);
         }
       }
-
 
       if (msg.type === "conversation.item.input_audio_transcription.completed") {
         transcript.push({ role: "user", content: msg.transcript });
@@ -550,7 +534,6 @@ wss.on("connection", (twilioWs) => {
 
         if (fnName === "save_caller_info") {
           try {
-            // Save directly to Base44 REST API
             try {
               const saveRes = await fetch(BASE44_API_BASE, {
                 method: "POST",
@@ -633,7 +616,7 @@ wss.on("connection", (twilioWs) => {
       }
     });
 
-    openAiWs.on("error", function(e) { 
+    openAiWs.on("error", function(e) {
       const errorMessage = e.message || JSON.stringify(e);
       console.error("OpenAI WS error:", errorMessage);
       if (e.code || e.statusCode) {
