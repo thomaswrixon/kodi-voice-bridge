@@ -1,2 +1,1 @@
-require("./supplier-guidance-preload");
-require("./server");
+require("./server-repeat-aware");
