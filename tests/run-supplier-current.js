@@ -129,7 +129,7 @@ async function lookup(args) {
   return {
     status: "single_match",
     job: { job_number: job.job_number || "", address: [job.address, job.suburb].filter(Boolean).join(", ") },
-    activities: (Array.isArray(job.labour_activities) ? job.labour_activities : []).map(a => ({ name: a.title || "", calendar_date: a.calendar_date || null })).filter(a => a.name && a.calendar_date)
+    activities: (Array.isArray(job.labour_activities) ? job.labour_activities : []).map(a => ({ name: norm(a.title) === "internal drains" ? "Drains" : (a.title || ""), calendar_date: a.calendar_date || null })).filter(a => a.name && a.calendar_date)
   };
 }
 
