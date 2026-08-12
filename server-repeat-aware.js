@@ -1,4 +1,5 @@
 require("./supplier-guidance-preload");
+const { QUOTE_FLOW_OVERRIDES } = require("./quote-flow-overrides");
 
 const fs = require("fs");
 const path = require("path");
@@ -18,6 +19,7 @@ REPEAT CALLER / QUOTE FOLLOW-UP RULES:
 - If more than one recent enquiry could match, briefly ask which one they mean rather than guessing.
 - Never read unrelated previous-call details back to the caller.
 `;
+promptModule.KODI_SYSTEM_PROMPT += QUOTE_FLOW_OVERRIDES;
 
 function replaceOnce(source, oldText, newText, label) {
   const first = source.indexOf(oldText);
