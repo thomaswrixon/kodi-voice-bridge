@@ -1,0 +1,155 @@
+require("./supplier-guidance-preload");
+
+const fs = require("fs");
+const path = require("path");
+const Module = require("module");
+
+const promptModule = require("./kodi-prompt");
+promptModule.KODI_SYSTEM_PROMPT += `
+
+REPEAT CALLER / QUOTE FOLLOW-UP RULES:
+- The phone system may provide recent_call_history for the same inbound caller ID from the previous 14 days.
+- Use recent_call_history only to avoid making a caller repeat information they already gave LCM. Never assume two calls are about the same enquiry solely because the phone number matches.
+- After the caller gives their name and reason, if the recent history clearly contains a matching quote, crack repair, concrete repair, driveway, slab, or other quote enquiry, ask one short confirmation question such as: "Are you following up on the same quote about [brief prior summary]?"
+- If they confirm it is the same enquiry, do NOT repeat the previous quote questionnaire or re-collect details already present in the recent history. Ask only: "Has anything changed since you last called?"
+- If nothing has changed, acknowledge the follow-up and save it as a repeat follow-up. In save_caller_info use reason "Repeat follow-up on existing quote enquiry" and include the related_call_log_id from the matching recent history in notes, plus whether anything changed.
+- If something has changed, collect only the changed or missing information, then save the follow-up linked to the previous call log ID.
+- If it is a different request, treat it as a new enquiry and do not reuse unrelated previous-call details.
+- If more than one recent enquiry could match, briefly ask which one they mean rather than guessing.
+- Never read unrelated previous-call details back to the caller.
+`;
+
+function replaceOnce(source, oldText, newText, label) {
+  const first = source.indexOf(oldText);
+  if (first < 0 || source.indexOf(oldText, first + oldText.length) >= 0) {
+    throw new Error("Repeat-caller patch failed at " + label);
+  }
+  return source.replace(oldText, newText);
+}
+
+const filename = path.join(__dirname, "server.js");
+let source = fs.readFileSync(filename, "utf8");
+
+source = replaceOnce(
+  source,
+  `function toAustralianLocalNumber(value) {
+  const raw = String(value || "").trim();
+  const compact = raw.replace(/[^+\\d]/g, "");
+  if (/^\\+61\\d+$/.test(compact)) return "0" + compact.slice(3);
+  if (/^61\\d+$/.test(compact)) return "0" + compact.slice(2);
+  return compact || raw;
+}
+
+async function lookupJobSchedule(args) {`,
+  `function toAustralianLocalNumber(value) {
+  const raw = String(value || "").trim();
+  const compact = raw.replace(/[^+\\d]/g, "");
+  if (/^\\+61\\d+$/.test(compact)) return "0" + compact.slice(3);
+  if (/^61\\d+$/.test(compact)) return "0" + compact.slice(2);
+  return compact || raw;
+}
+
+function normaliseCallerNumber(value) {
+  return toAustralianLocalNumber(value).replace(/\\D/g, "");
+}
+
+async function lookupRecentCallerHistory(number) {
+  const target = normaliseCallerNumber(number);
+  if (!BASE44_API_KEY || !BASE44_API_BASE || !target || target === "unknown") return [];
+
+  try {
+    const response = await fetch(BASE44_API_BASE + "?sort=-created_date&limit=200", {
+      headers: { "api_key": BASE44_API_KEY },
+    });
+    if (!response.ok) throw new Error("Call history lookup failed with HTTP " + response.status);
+
+    const data = await response.json();
+    const items = Array.isArray(data) ? data : (data.items || []);
+    const cutoff = Date.now() - (14 * 24 * 60 * 60 * 1000);
+
+    return items
+      .filter(function(item) {
+        return normaliseCallerNumber(item.caller_number) === target;
+      })
+      .filter(function(item) {
+        const timestamp = Date.parse(item.created_date || item.updated_date || "");
+        return Number.isFinite(timestamp) && timestamp >= cutoff;
+      })
+      .sort(function(a, b) {
+        return Date.parse(b.created_date || b.updated_date || 0) - Date.parse(a.created_date || a.updated_date || 0);
+      })
+      .slice(0, 5)
+      .map(function(item) {
+        return {
+          call_log_id: item.id || "",
+          called_at: item.created_date || item.updated_date || "",
+          caller_name: item.from_name || "",
+          summary: String(item.message || "").slice(0, 500),
+        };
+      });
+  } catch (error) {
+    console.error("Recent caller history lookup error:", error.message);
+    return [];
+  }
+}
+
+async function lookupJobSchedule(args) {`,
+  "history helper"
+);
+
+source = replaceOnce(
+  source,
+  `  const transcript = [];
+  let savedByTool = false;
+`,
+  `  const transcript = [];
+  let savedByTool = false;
+  let recentCallerHistoryPromise = Promise.resolve([]);
+`,
+  "history promise"
+);
+
+source = replaceOnce(
+  source,
+  `    openAiWs.on("open", () => {`,
+  `    openAiWs.on("open", async () => {`,
+  "async open handler"
+);
+
+source = replaceOnce(
+  source,
+  `      const localCallerNumber = toAustralianLocalNumber(callerNumber);
+      const greetingPrompt = direction === "outbound"
+        ? "The call just connected to Tommy. Give him the morning briefing greeting."
+        : "The call just connected. The inbound caller ID callback number is " + localCallerNumber + ". Use this number as the default callback number. Do not ask the caller to provide their phone number unless caller ID is unavailable/private/unknown or they want to use a different number. If a callback is needed, read this local-format number back digit by digit, beginning with 0 rather than +61, and ask the caller to confirm it. Start with your greeting now.";
+`,
+  `      const localCallerNumber = toAustralianLocalNumber(callerNumber);
+      const recentCalls = direction === "inbound" ? await recentCallerHistoryPromise : [];
+      const recentHistoryInstruction = recentCalls.length
+        ? " Recent_call_history for this same caller ID from the last 14 days is: " + JSON.stringify(recentCalls) + ". Use this history only after the caller explains why they are calling. If their reason appears to be the same quote or repair enquiry, confirm that it is the same enquiry before reusing the prior details. If they confirm it is the same enquiry, do not repeat the prior questionnaire; ask only whether anything has changed. If it is different, ignore the old enquiry and handle this as new."
+        : " There is no recent_call_history for this caller ID in the last 14 days.";
+      const greetingPrompt = direction === "outbound"
+        ? "The call just connected to Tommy. Give him the morning briefing greeting."
+        : "The call just connected. The inbound caller ID callback number is " + localCallerNumber + ". Use this number as the default callback number. Do not ask the caller to provide their phone number unless caller ID is unavailable/private/unknown or they want to use a different number. If a callback is needed, read this local-format number back digit by digit, beginning with 0 rather than +61, and ask the caller to confirm it." + recentHistoryInstruction + " Start with your greeting now.";
+`,
+  "greeting history context"
+);
+
+source = replaceOnce(
+  source,
+  `      console.log("Stream started: " + streamSid + " direction: " + direction + " from: " + callerNumber);
+      connectToOpenAI();
+`,
+  `      console.log("Stream started: " + streamSid + " direction: " + direction + " from: " + callerNumber);
+      recentCallerHistoryPromise = direction === "inbound"
+        ? lookupRecentCallerHistory(callerNumber)
+        : Promise.resolve([]);
+      connectToOpenAI();
+`,
+  "start history lookup"
+);
+
+const patchedModule = new Module(filename, module);
+patchedModule.filename = filename;
+patchedModule.paths = Module._nodeModulePaths(__dirname);
+patchedModule._compile(source, filename);
