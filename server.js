@@ -19,10 +19,107 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const BASE44_API_KEY = process.env.BASE44_API_KEY || "";
 const BASE44_APP_ID = process.env.BASE44_APP_ID || "69c1bcc966e03d26bd89d178";
-const BASE44_API_BASE = "https://base44.app/api/apps/" + BASE44_APP_ID + "/entities/CallLog";
+const BASE44_ENTITIES_BASE = "https://base44.app/api/apps/" + BASE44_APP_ID + "/entities";
+const BASE44_API_BASE = BASE44_ENTITIES_BASE + "/CallLog";
 const BASE_URL = process.env.BASE_URL || "https://your-app.railway.app";
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+
+function normaliseSearch(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+async function listBase44Entities(entityName, params) {
+  const query = new URLSearchParams(params || {});
+  const url = BASE44_ENTITIES_BASE + "/" + entityName + (query.toString() ? "?" + query.toString() : "");
+  const response = await fetch(url, { headers: { api_key: BASE44_API_KEY } });
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error("Base44 " + entityName + " lookup failed: " + response.status + " " + JSON.stringify(body));
+  }
+  return Array.isArray(body) ? body : (body.items || body.entities || []);
+}
+
+async function lookupJobSchedule(args) {
+  const searchTerm = normaliseSearch(args.search_term);
+  const addressTerm = normaliseSearch(args.address);
+  const jobNumberTerm = normaliseSearch(args.job_number);
+  const queryTerms = [searchTerm, addressTerm, jobNumberTerm].filter(Boolean);
+
+  if (queryTerms.length === 0) {
+    return { status: "need_more_detail", message: "Ask for the suburb, full address, or job number." };
+  }
+
+  const jobs = await listBase44Entities("Job", { limit: "500" });
+  let matches = jobs.filter(function(job) {
+    const haystack = normaliseSearch([
+      job.job_number,
+      job.builder_no,
+      job.lot_no,
+      job.address,
+      job.suburb,
+      job.state,
+      job.post_code,
+    ].filter(Boolean).join(" "));
+    return queryTerms.every(function(term) { return haystack.includes(term); });
+  });
+
+  // A suburb-only request should focus on live work, not completed historical jobs.
+  if (!addressTerm && !jobNumberTerm) {
+    const activeMatches = matches.filter(function(job) { return job.status !== "Closed"; });
+    if (activeMatches.length > 0) matches = activeMatches;
+  }
+
+  if (matches.length === 0) {
+    return { status: "not_found", message: "No matching LCM job was found." };
+  }
+
+  if (matches.length > 1) {
+    return {
+      status: "multiple_matches",
+      message: "Ask the caller for the full address or job number.",
+      matches: matches.slice(0, 10).map(function(job) {
+        return {
+          job_number: job.job_number,
+          builder_number: job.builder_no,
+          address: [job.address, job.suburb].filter(Boolean).join(", "),
+          status: job.status,
+        };
+      }),
+    };
+  }
+
+  const job = matches[0];
+  const activities = await listBase44Entities("Activity", { job_id: job.id, limit: "200" });
+  const jobActivities = activities.filter(function(activity) { return activity.job_id === job.id; });
+  const pour = jobActivities.find(function(activity) {
+    return normaliseSearch(activity.title) === "pour concrete";
+  }) || jobActivities.find(function(activity) {
+    return normaliseSearch(activity.title).includes("pour");
+  });
+
+  return {
+    status: "single_match",
+    job: {
+      job_number: job.job_number,
+      builder_number: job.builder_no,
+      address: [job.address, job.suburb, job.state, job.post_code].filter(Boolean).join(", "),
+      status: job.status,
+    },
+    pour: pour ? {
+      date: pour.calendar_start_date || null,
+      time: pour.calendar_start_time || null,
+      estimated_date: pour.estimated_start_date || null,
+      completed_date: pour.completed_date || null,
+    } : null,
+    message: pour && pour.calendar_start_date
+      ? "Confirmed pour date found."
+      : "The job was found, but no confirmed pour date is recorded.",
+  };
+}
 
 // ── PCM16 → G.711 μ-law codec ─────────────────────────────────────────────────
 // OpenAI Realtime GA ignores the requested "g711_ulaw" output format and always
@@ -280,6 +377,20 @@ wss.on("connection", (twilioWs) => {
           tools: [
             {
               type: "function",
+              name: "lookup_job_schedule",
+              description: "Search the live LCM app for jobs and their Pour Concrete activity. Use this for any caller asking about a job, schedule, activity, or pour date. If multiple matches are returned, ask for the full address or job number and call this tool again.",
+              parameters: {
+                type: "object",
+                properties: {
+                  search_term: { type: "string", description: "The suburb, partial address, full address, builder number, or LCM job number stated by the caller" },
+                  address: { type: "string", description: "Full or partial street address when the caller provides it" },
+                  job_number: { type: "string", description: "LCM or builder job number when the caller provides it" },
+                },
+                required: ["search_term"],
+              },
+            },
+            {
+              type: "function",
               name: "save_caller_info",
               description: "MANDATORY: Save caller name, reason, and callback number. You MUST call this on every inbound call before hang_up. Call it immediately after saying goodbye.",
               parameters: {
@@ -288,9 +399,10 @@ wss.on("connection", (twilioWs) => {
                   name: { type: "string", description: "Callers name" },
                   reason: { type: "string", description: "Reason for calling" },
                   callback_number: { type: "string", description: "Confirmed callback number" },
-                  notes: { type: "string", description: "Any other relevant details" },
+                  notes: { type: "string", description: "Relevant details only. Never claim the callback number was confirmed unless the caller explicitly confirmed it." },
+                  callback_number_confirmed: { type: "boolean", description: "True only when Kodi read the number digit by digit and the caller explicitly confirmed it." },
                 },
-                required: ["name", "reason"],
+                required: ["name", "reason", "callback_number_confirmed"],
               },
             },
             {
@@ -378,6 +490,30 @@ wss.on("connection", (twilioWs) => {
         const fnName = msg.name;
         let fnArgs = {};
         try { fnArgs = JSON.parse(msg.arguments || "{}"); } catch (err) {}
+
+        if (fnName === "lookup_job_schedule") {
+          let lookupResult;
+          try {
+            lookupResult = await lookupJobSchedule(fnArgs);
+            console.log("LCM lookup result: " + JSON.stringify(lookupResult));
+          } catch (lookupErr) {
+            console.error("LCM lookup error:", lookupErr);
+            lookupResult = {
+              status: "lookup_error",
+              message: "The LCM system could not be checked right now. Take a callback message for Tommy.",
+            };
+          }
+
+          openAiWs.send(JSON.stringify({
+            type: "conversation.item.create",
+            item: {
+              type: "function_call_output",
+              call_id: msg.call_id,
+              output: JSON.stringify(lookupResult),
+            },
+          }));
+          openAiWs.send(JSON.stringify({ type: "response.create" }));
+        }
 
         if (fnName === "save_caller_info") {
           try {
