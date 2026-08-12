@@ -20,10 +20,9 @@ const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 // Kodi and LCM are separate Base44 apps and require separate connections.
 const KODI_BASE44_API_KEY = process.env.BASE44_API_KEY || "";
 const KODI_BASE44_APP_ID = process.env.BASE44_APP_ID || "69c1bcc966e03d26bd89d178";
-const LCM_BASE44_API_KEY = process.env.LCM_BASE44_API_KEY || "";
-const LCM_BASE44_APP_ID = process.env.LCM_BASE44_APP_ID || "695080d2d131b2b3610531de";
+const LCM_LOOKUP_URL = process.env.LCM_LOOKUP_URL || "";
+const LCM_LOOKUP_SECRET = process.env.LCM_LOOKUP_SECRET || "";
 const KODI_ENTITIES_BASE = "https://base44.app/api/apps/" + KODI_BASE44_APP_ID + "/entities";
-const LCM_ENTITIES_BASE = "https://base44.app/api/apps/" + LCM_BASE44_APP_ID + "/entities";
 const BASE44_API_BASE = KODI_ENTITIES_BASE + "/CallLog";
 const BASE_URL = process.env.BASE_URL || "https://your-app.railway.app";
 
@@ -36,96 +35,55 @@ function normaliseSearch(value) {
     .trim();
 }
 
-async function listBase44Entities(entityName, params) {
-  const query = new URLSearchParams(params || {});
-  if (!LCM_BASE44_API_KEY) {
-    throw new Error("LCM_BASE44_API_KEY is missing");
-  }
-  const url = LCM_ENTITIES_BASE + "/" + entityName + (query.toString() ? "?" + query.toString() : "");
-  const response = await fetch(url, { headers: { api_key: LCM_BASE44_API_KEY } });
-  const body = await response.json();
-  if (!response.ok) {
-    throw new Error("Base44 " + entityName + " lookup failed: " + response.status + " " + JSON.stringify(body));
-  }
-  return Array.isArray(body) ? body : (body.items || body.entities || []);
-}
-
 async function lookupJobSchedule(args) {
-  const searchTerm = normaliseSearch(args.search_term);
-  const addressTerm = normaliseSearch(args.address);
-  const jobNumberTerm = normaliseSearch(args.job_number);
-  const queryTerms = [searchTerm, addressTerm, jobNumberTerm].filter(Boolean);
+  if (!LCM_LOOKUP_URL || !LCM_LOOKUP_SECRET) {
+    throw new Error("LCM_LOOKUP_URL or LCM_LOOKUP_SECRET is missing");
+  }
 
-  if (queryTerms.length === 0) {
+  const requestBody = {
+    search_term: String(args.search_term || "").trim(),
+    address: String(args.address || "").trim(),
+    job_number: String(args.job_number || "").trim(),
+  };
+
+  if (!requestBody.search_term && !requestBody.address && !requestBody.job_number) {
     return { status: "need_more_detail", message: "Ask for the suburb, full address, or job number." };
   }
 
-  const jobs = await listBase44Entities("Job", { limit: "500" });
-  let matches = jobs.filter(function(job) {
-    const haystack = normaliseSearch([
-      job.job_number,
-      job.builder_no,
-      job.lot_no,
-      job.address,
-      job.suburb,
-      job.state,
-      job.post_code,
-    ].filter(Boolean).join(" "));
-    return queryTerms.every(function(term) { return haystack.includes(term); });
-  });
-
-  // A suburb-only request should focus on live work, not completed historical jobs.
-  if (!addressTerm && !jobNumberTerm) {
-    const activeMatches = matches.filter(function(job) { return job.status !== "Closed"; });
-    if (activeMatches.length > 0) matches = activeMatches;
-  }
-
-  if (matches.length === 0) {
-    return { status: "not_found", message: "No matching LCM job was found." };
-  }
-
-  if (matches.length > 1) {
-    return {
-      status: "multiple_matches",
-      message: "Ask the caller for the full address or job number.",
-      matches: matches.slice(0, 10).map(function(job) {
-        return {
-          job_number: job.job_number,
-          builder_number: job.builder_no,
-          address: [job.address, job.suburb].filter(Boolean).join(", "),
-          status: job.status,
-        };
-      }),
-    };
-  }
-
-  const job = matches[0];
-  const activities = await listBase44Entities("Activity", { job_id: job.id, limit: "200" });
-  const jobActivities = activities.filter(function(activity) { return activity.job_id === job.id; });
-  const pour = jobActivities.find(function(activity) {
-    return normaliseSearch(activity.title) === "pour concrete";
-  }) || jobActivities.find(function(activity) {
-    return normaliseSearch(activity.title).includes("pour");
-  });
-
-  return {
-    status: "single_match",
-    job: {
-      job_number: job.job_number,
-      builder_number: job.builder_no,
-      address: [job.address, job.suburb, job.state, job.post_code].filter(Boolean).join(", "),
-      status: job.status,
+  const response = await fetch(LCM_LOOKUP_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-lcm-secret": LCM_LOOKUP_SECRET,
+      "Authorization": "Bearer " + LCM_LOOKUP_SECRET,
     },
-    pour: pour ? {
-      date: pour.calendar_start_date || null,
-      time: pour.calendar_start_time || null,
-      estimated_date: pour.estimated_start_date || null,
-      completed_date: pour.completed_date || null,
-    } : null,
-    message: pour && pour.calendar_start_date
-      ? "Confirmed pour date found."
-      : "The job was found, but no confirmed pour date is recorded.",
-  };
+    body: JSON.stringify(requestBody),
+  });
+
+  const bodyText = await response.text();
+  let body;
+  try {
+    body = bodyText ? JSON.parse(bodyText) : {};
+  } catch (error) {
+    throw new Error("LCM lookup returned invalid JSON");
+  }
+
+  if (!response.ok) {
+    throw new Error("LCM lookup failed: " + response.status + " " + bodyText.slice(0, 500));
+  }
+
+  const result = body.data || body.result || body;
+  if (result.status === "single_match" && Array.isArray(result.activities)) {
+    result.activities = result.activities.map(function(activity) {
+      return {
+        name: activity.name || activity.title || activity.activity_name || "",
+        calendar_date: activity.calendar_date || activity.calendar_start_date || activity.date || null,
+      };
+    }).filter(function(activity) {
+      return activity.name && activity.calendar_date;
+    });
+  }
+  return result;
 }
 
 // ── PCM16 → G.711 μ-law codec ─────────────────────────────────────────────────
@@ -385,7 +343,7 @@ wss.on("connection", (twilioWs) => {
             {
               type: "function",
               name: "lookup_job_schedule",
-              description: "Search the live LCM app for jobs and their Pour Concrete activity. Use this for any caller asking about a job, schedule, activity, or pour date. If multiple matches are returned, ask for the full address or job number and call this tool again.",
+              description: "Search the live LCM app for a job and all activities shown in Labour Allocation. Results contain only each activity name and confirmed calendar date. Use this for any caller asking about a job or scheduled activity. If multiple jobs match, ask for the full address or job number and call this tool again.",
               parameters: {
                 type: "object",
                 properties: {
