@@ -105,12 +105,34 @@ async function openai(messages, options = {}) {
 async function lookupJobSchedule(args) {
   const query = { limit: 20 };
   const searchTerm = String(args.search_term || "").trim();
+  let address = String(args.address || "").trim();
+  let suburb = "";
+
+  if (address) {
+    const commaIndex = address.lastIndexOf(",");
+    if (commaIndex >= 0) {
+      suburb = address.slice(commaIndex + 1).trim();
+      address = address.slice(0, commaIndex).trim();
+    }
+  }
+
   if (args.job_number) query.job_number = String(args.job_number);
-  if (args.address) query.address = String(args.address);
-  if (!args.address && searchTerm) {
-    if (/\d/.test(searchTerm)) query.address = searchTerm;
-    else query.suburb = searchTerm;
-  } else if (args.address && searchTerm && !String(args.address).toLowerCase().includes(searchTerm.toLowerCase())) {
+  if (address) query.address = address;
+  if (suburb) query.suburb = suburb;
+
+  if (!address && searchTerm) {
+    if (/\d/.test(searchTerm)) {
+      const commaIndex = searchTerm.lastIndexOf(",");
+      if (commaIndex >= 0) {
+        query.address = searchTerm.slice(0, commaIndex).trim();
+        query.suburb = searchTerm.slice(commaIndex + 1).trim();
+      } else {
+        query.address = searchTerm;
+      }
+    } else {
+      query.suburb = searchTerm;
+    }
+  } else if (address && !suburb && searchTerm && address.toLowerCase() !== searchTerm.toLowerCase()) {
     query.suburb = searchTerm;
   }
 
@@ -175,16 +197,25 @@ async function kodiStep(messages) {
 async function callerStep(scenario, transcript) {
   const prompt = [
     "You are a realistic caller testing an Australian concreting receptionist.",
+    "You are ONLY the caller. Never speak as Kodi, the receptionist, an assistant, or a narrator.",
+    "Never prefix your response with KODI:, ASSISTANT:, CALLER:, or any role label.",
     "Your name is " + scenario.caller_name + ". Your callback number is " + scenario.callback_number + ".",
     "Goal: " + scenario.goal,
     "Variation: " + scenario.variation,
-    "Reply with only the next thing the caller would say.",
+    "Reply with only the next thing the caller would naturally say.",
     "Do not volunteer information before Kodi asks unless the goal says to.",
     "When the interaction is naturally complete, reply exactly END_CALL.",
     "Transcript:\n" + transcript.map(t => t.role.toUpperCase() + ": " + t.content).join("\n")
   ].join("\n");
-  const reply = await openai([{ role: "system", content: prompt }], { temperature: 0.7 });
-  return (reply.content || "").trim();
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const reply = await openai([{ role: "system", content: prompt }], { temperature: 0.5 });
+    const text = (reply.content || "").trim();
+    if (!/^(KODI|ASSISTANT)\s*:/i.test(text)) {
+      return text.replace(/^CALLER\s*:\s*/i, "");
+    }
+  }
+  return "Could you please keep checking that for me?";
 }
 
 async function judgeRun(scenario, transcript, toolEvents) {
