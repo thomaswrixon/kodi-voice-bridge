@@ -169,22 +169,31 @@ async function kodiReply(userText) {
   messages.push(greeting);
   messages.push({ role: "user", content: userText });
   const toolEvents = [];
+  const assistantTurns = [];
 
-  for (let round = 0; round < 4; round++) {
+  for (let round = 0; round < 6; round++) {
     const reply = await openai(messages, { tools: [lookupTool], tool_choice: "auto" });
     messages.push(reply);
-    if (!reply.tool_calls || !reply.tool_calls.length) {
-      return { greeting: greeting.content || "", answer: reply.content || "", tool_events: toolEvents };
+    if (reply.tool_calls && reply.tool_calls.length) {
+      for (const call of reply.tool_calls) {
+        let args = {};
+        try { args = JSON.parse(call.function.arguments || "{}"); } catch (_) {}
+        const result = await lookupJobSchedule(args);
+        toolEvents.push({ args, result });
+        messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
+      }
+      continue;
     }
-    for (const call of reply.tool_calls) {
-      let args = {};
-      try { args = JSON.parse(call.function.arguments || "{}"); } catch (_) {}
-      const result = await lookupJobSchedule(args);
-      toolEvents.push({ args, result });
-      messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
+
+    const text = reply.content || "";
+    assistantTurns.push(text);
+    if (!toolEvents.length && round < 2) {
+      messages.push({ role: "user", content: "Yes, please check the live LCM schedule now and give me the confirmed answer." });
+      continue;
     }
+    return { greeting: greeting.content || "", answer: assistantTurns.join(" "), tool_events: toolEvents };
   }
-  return { greeting: greeting.content || "", answer: "", tool_events: toolEvents };
+  return { greeting: greeting.content || "", answer: assistantTurns.join(" "), tool_events: toolEvents };
 }
 
 function judgeDateScenario(scenario, run) {
