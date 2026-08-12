@@ -295,8 +295,7 @@ wss.on("connection", (twilioWs) => {
             },
             output: {
               format: {
-                type: "g711_ulaw",
-                rate: 8000,
+                type: "audio/pcmu",
               },
               voice: "shimmer",
             },
@@ -357,6 +356,16 @@ wss.on("connection", (twilioWs) => {
     openAiWs.on("message", async (data) => {
       const msg = JSON.parse(data.toString());
 
+      if (msg.type === "error") {
+        console.error("OpenAI Realtime error:", JSON.stringify(msg.error || msg));
+      }
+      if (msg.type === "session.updated") {
+        console.log("OpenAI session accepted: input=audio/pcmu output=audio/pcmu");
+      }
+      if (msg.type === "input_audio_buffer.speech_started" || msg.type === "input_audio_buffer.speech_stopped") {
+        console.log("OpenAI event: " + msg.type);
+      }
+
       if (msg.type === "response.output_audio.delta" && msg.delta) {
         console.log("OpenAI event: response.output_audio.delta");
         console.log("Response audio base64 length: " + msg.delta.length + " bytes");
@@ -368,23 +377,15 @@ wss.on("connection", (twilioWs) => {
         }
         console.log("Twilio media event: event=media streamSid=" + streamSid + " payloadLength=" + msg.delta.length);
         try {
-          // OpenAI Realtime GA's PCM16 output defaults to 24kHz regardless of
-          // the requested g711_ulaw/8000 session config.
-          const pcm16Binary = Buffer.from(msg.delta, "base64");
-          const g711Binary = pcm16ToG711Ulaw(pcm16Binary, 24000);
-          const g711Base64 = g711Binary.toString("base64");
-
-          // Chunk into ~160 byte segments (20ms @ 8kHz, 1 byte/sample)
-          for (let i = 0; i < g711Base64.length; i += 220) {
-            const chunk = g711Base64.slice(i, i + 220);
-            twilioWs.send(JSON.stringify({
-              event: "media",
-              streamSid: streamSid,
-              media: { payload: chunk },
-            }));
-          }
-        } catch (convErr) {
-          console.error("Audio conversion failed:", convErr.message);
+          // The session requests PCMU, which is Twilio's native 8 kHz mu-law
+          // format. Forward the base64 audio bytes unchanged.
+          twilioWs.send(JSON.stringify({
+            event: "media",
+            streamSid: streamSid,
+            media: { payload: msg.delta },
+          }));
+        } catch (forwardErr) {
+          console.error("Audio forwarding failed:", forwardErr.message);
         }
       }
 
