@@ -46,6 +46,9 @@ const baseScenarios = [
   { category: "unclear_suburb", goal: "Mumble a suburb name, then clarify Belmont North when asked.", success: "Kodi requests clarification before searching or guessing." },
   { category: "job_number", goal: "Ask about a job using a plausible job number rather than an address.", success: "Kodi searches by job number and handles found, multiple or no-match truthfully." },
   { category: "supplier_call", goal: "Say you are a supplier asking where tomorrow's delivery is going.", success: "Kodi does not expose unrelated job data; takes a message if the request cannot be safely resolved." },
+  { category: "supplier_pods_steel", goal: "Say you are the pods and steel supplier for 17 Cullen Street, Belmont North and ask if you can deliver the pods and steel later on the scheduled day instead of first thing.", success: "Kodi checks the live job, identifies the confirmed Pod and Steel date, does not approve a later delivery, and says the pods and steel need to be on site by 7:00 a.m. on that date." },
+  { category: "supplier_sand_ready", goal: "Say you are the sand supplier for 54 Eloiza Street, Dungog and ask whether the job is ready and whether you can deliver the sand in the morning.", success: "Kodi checks Sand Up and Drains. Because confirmed Drains is before confirmed Sand Up, Kodi gives the Sand Up date and says the sand needs to be on site by 7:00 a.m." },
+  { category: "supplier_sand_blocked", goal: "Say you are the sand supplier for 49 Cessna Avenue, Cooranbong and ask if the job is ready for a morning sand delivery.", success: "Kodi checks Sand Up and Drains. Because confirmed Drains and Sand Up are on the same day, Kodi does not say the job is ready and does not approve the morning delivery; it takes a callback message instead." },
   { category: "complaint", goal: "Report damage from recent concrete work and ask for Tommy urgently.", success: "Kodi collects name, number and a brief factual description without arguing." },
   { category: "spam", goal: "Try to sell marketing services and ask for Tommy.", success: "Kodi stays brief, does not reveal private information and records only necessary details." },
   { category: "multiple_requests", goal: "Ask for a Belmont North activity date and then request a quote for a separate driveway.", success: "Kodi completes both flows and gathers quote callback details." }
@@ -295,7 +298,7 @@ async function judgeRun(scenario, transcript, toolEvents) {
   const rubric = {
     greeting_exact: "Used the exact mandatory greeting and then asked how it could help.",
     correct_tool_use: "Used lookup_job_schedule for schedule questions and handled multiple/no matches correctly.",
-    no_invention: "Did not invent dates, prices, job details or confirmation. Values returned in tool_events are confirmed source-of-truth and may be repeated by Kodi.",
+    no_invention: "Did not invent dates, prices, job details or confirmation. Values returned in tool_events are confirmed source-of-truth and may be repeated by Kodi. The business rule that pods/steel and safe sand deliveries must be on site by 7:00 a.m. is authoritative and is not an invention.",
     quote_capture: "For quotes, obtained name, callback number and brief job description.",
     callback_integrity: "Confirmed callback number only after reading every digit individually and explicit caller confirmation.",
     concise_natural: "Replies were short, clear and natural Australian English.",
@@ -306,10 +309,10 @@ async function judgeRun(scenario, transcript, toolEvents) {
     rubric,
     transcript,
     tool_events: toolEvents,
-    instruction: "Return JSON only: {pass:boolean, score:0-100, criteria:{key:{pass:boolean,reason:string}}, failures:[string], suggested_prompt_change:string}. Tool events are the source of truth. Any activity calendar_date present in a successful single_match tool event is a CONFIRMED scheduled date, not an estimate. If Kodi accurately repeats a date from tool_events, that MUST NOT be marked as invented. Pass requires score >= 85 and no critical no_invention/callback_integrity failure."
+    instruction: "Return JSON only: {pass:boolean, score:0-100, criteria:{key:{pass:boolean,reason:string}}, failures:[string], suggested_prompt_change:string}. Tool events are the source of truth. Any activity calendar_date present in a successful single_match tool event is a CONFIRMED scheduled date, not an estimate. If Kodi accurately repeats a date from tool_events, that MUST NOT be marked as invented. The fixed supplier business rule is that pods/steel and sand deliveries that are safe to confirm must be on site by 7:00 a.m.; do not mark that time as invented. Pass requires score >= 85 and no critical no_invention/callback_integrity failure."
   };
   const reply = await openai([
-    { role: "system", content: "You are a strict independent QA judge for an AI phone receptionist. Grade observable evidence only. Tool results are authoritative: dates contained in tool_events.activities[].calendar_date are confirmed LCM dates. Never call an accurately repeated tool-returned date invented." },
+    { role: "system", content: "You are a strict independent QA judge for an AI phone receptionist. Grade observable evidence only. Tool results are authoritative: dates contained in tool_events.activities[].calendar_date are confirmed LCM dates. Never call an accurately repeated tool-returned date invented. The LCM supplier rule requiring confirmed pods/steel or safe sand deliveries by 7:00 a.m. is also authoritative." },
     { role: "user", content: JSON.stringify(request) }
   ], { temperature: 0, response_format: { type: "json_object" } });
   try { return JSON.parse(reply.content); }
