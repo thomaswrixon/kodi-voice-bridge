@@ -3,8 +3,9 @@ const path = require("path");
 const promptModule = require("./kodi-prompt");
 const { PERSONAL_CALL_OVERRIDES } = require("./personal-call-overrides");
 const { PERSONAL_CALL_HARD_STOPS } = require("./personal-call-hard-stops");
+const { CONVERSATION_STYLE_OVERRIDES } = require("./conversation-style-overrides");
 
-promptModule.KODI_SYSTEM_PROMPT += PERSONAL_CALL_OVERRIDES + PERSONAL_CALL_HARD_STOPS;
+promptModule.KODI_SYSTEM_PROMPT += PERSONAL_CALL_OVERRIDES + PERSONAL_CALL_HARD_STOPS + CONVERSATION_STYLE_OVERRIDES;
 
 const originalReadFileSync = fs.readFileSync;
 
