@@ -1,4 +1,5 @@
 const { KODI_SYSTEM_PROMPT } = require("../kodi-prompt");
+const { QUOTE_FLOW_OVERRIDES } = require("../quote-flow-overrides");
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const MODEL = process.env.SIM_MODEL || "gpt-4o-mini";
@@ -31,6 +32,7 @@ const scenarios = [
       movement: "No, neither side is sitting higher than the other.",
       other_issue: "No other issue that I have noticed.",
       photos: "Yes, I have photos available.",
+      timeframe: "Sometime in the next month would be ideal.",
     }
   },
   {
@@ -113,7 +115,7 @@ function callerReply(scenario, assistantText, state) {
     ["location", /(suburb|address|property|site address|where is|where's)/],
     ["builder", /(builder|company)/],
     ["plans", /(plans|engineering|engineer)/],
-    ["extent", /(how many|one or two|several|extent|across|larger area)/],
+    ["extent", /(how many|one or two|several|extent|across|larger area|where.*crack|where.*damage)/],
     ["crack_size", /(hairline|wide|width|millimet|open crack|small crack)/],
     ["movement", /(higher|movement|moved|lifted|one side)/],
     ["other_issue", /(crumbling|water|trip|steel|sinking|other issue|anything else.*damage)/],
@@ -122,8 +124,8 @@ function callerReply(scenario, assistantText, state) {
     ["finish", /(finish|plain|colou|exposed|stencil)/],
     ["existing", /(currently|existing|remove|removal|gravel|dirt|grass|what is there|what's there)/],
     ["access", /(access|steep|tight|pump|unusual)/],
-    ["timeframe", /(timeframe|when.*hop|timing|when.*done|when.*start|particular time)/],
-    ["work", /(what.*work|type of work|what are you looking|what is it)/],
+    ["timeframe", /(timeframe|when.*hop|timing|when.*done|when.*start|particular time|next month)/],
+    ["work", /(what.*work|type of work|what are you looking|what is it|extra|additional)/],
   ];
 
   for (const [key, re] of rules) {
@@ -150,42 +152,50 @@ function noPrice(text) {
 }
 
 function judge(scenario, transcript, state) {
-  const assistant = transcript.filter(x => x.role === "assistant").map(x => x.content).join(" ");
-  const lower = assistant.toLowerCase();
+  const assistantTurns = transcript.filter(x => x.role === "assistant").map(x => x.content);
+  const assistant = assistantTurns.join(" ");
   const common = noPrice(assistant) && !/(we can fit you in|we can start|book you in|definitely repair|definitely fix)/i.test(assistant);
+  const noRedundantHelpQuestion = !assistantTurns.slice(1, 3).some(t => /what can i help you with today/i.test(t));
 
   if (scenario.kind === "standard") {
     const fields = ["location", "size", "finish", "existing", "timeframe"];
     const collected = fields.every(k => state.used[k]);
     const noScheduleLookupLanguage = !/(check the live lcm schedule|look up the job schedule)/i.test(assistant);
-    return { pass: common && collected && noScheduleLookupLanguage, checks: { common, collected, noScheduleLookupLanguage, used: state.used } };
+    return { pass: common && collected && noScheduleLookupLanguage && noRedundantHelpQuestion, checks: { common, collected, noScheduleLookupLanguage, noRedundantHelpQuestion, used: state.used } };
   }
 
   if (scenario.kind === "crack_repair") {
     const fields = ["location", "extent", "crack_size", "movement", "photos"];
     const collected = fields.every(k => state.used[k]);
     const noDiagnosis = !/(structural|epoxy|polyurethane|definitely repair|definitely fix|cause is)/i.test(assistant);
-    return { pass: common && collected && noDiagnosis, checks: { common, collected, noDiagnosis, used: state.used } };
+    return { pass: common && collected && noDiagnosis && noRedundantHelpQuestion, checks: { common, collected, noDiagnosis, noRedundantHelpQuestion, used: state.used } };
   }
 
   if (scenario.kind === "new_build") {
     const fields = ["location", "plans", "size", "timeframe"];
     const collected = fields.every(k => state.used[k]);
-    return { pass: common && collected, checks: { common, collected, used: state.used } };
+    const noResidentialDrift = !/(preferred finish|what.*finish|currently on the site.*remove|needs? removal|access issues|unusual site conditions)/i.test(assistant);
+    return { pass: common && collected && noResidentialDrift && noRedundantHelpQuestion, checks: { common, collected, noResidentialDrift, noRedundantHelpQuestion, used: state.used } };
   }
 
   if (scenario.kind === "variation") {
     const collected = state.used.location && state.used.size && (state.used.work || /extra|additional|variation|patio/i.test(assistant));
-    return { pass: common && collected, checks: { common, collected, used: state.used } };
+    const noFalseRepeat = !/(following up on the same enquiry|same enquiry.*new request)/i.test(assistant);
+    return { pass: common && collected && noFalseRepeat && noRedundantHelpQuestion, checks: { common, collected, noFalseRepeat, noRedundantHelpQuestion, used: state.used } };
   }
 
   if (scenario.kind === "repeat") {
     const confirmsSame = state.confirmedSame;
     const asksChanged = state.changedAnswered;
-    const afterSame = transcript.slice(transcript.findIndex(x => x.role === "user" && /same crack repair/i.test(x.content)) + 1)
-      .filter(x => x.role === "assistant").map(x => x.content).join(" ").toLowerCase();
+    const sameIndex = transcript.findIndex(x => x.role === "user" && /same crack repair/i.test(x.content));
+    const afterSame = transcript.slice(sameIndex + 1).filter(x => x.role === "assistant").map(x => x.content).join(" ").toLowerCase();
     const didNotRepeat = !/(how wide|hairline|one side|photos|how many cracks|what suburb|what address)/i.test(afterSame);
-    return { pass: common && confirmsSame && asksChanged && didNotRepeat, checks: { common, confirmsSame, asksChanged, didNotRepeat } };
+    const changedBeforeCallback = sameIndex >= 0 && transcript.slice(sameIndex + 1).some((x, i, arr) => {
+      if (x.role !== "assistant" || !/has anything changed since you last called/i.test(x.content)) return false;
+      const callbackIndex = arr.findIndex(y => y.role === "assistant" && /(callback number|0\s*[, ]\s*4)/i.test(y.content));
+      return callbackIndex < 0 || i < callbackIndex;
+    });
+    return { pass: common && confirmsSame && asksChanged && didNotRepeat && changedBeforeCallback, checks: { common, confirmsSame, asksChanged, didNotRepeat, changedBeforeCallback } };
   }
 
   return { pass: false, checks: {} };
@@ -197,7 +207,7 @@ async function runScenario(scenario) {
     : "\nThere is no recent_call_history for this caller ID in the last 14 days.";
 
   const messages = [
-    { role: "system", content: KODI_SYSTEM_PROMPT + "\nTEXT SIMULATION RULE: Do not call save_caller_info or hang_up and do not write data. Continue the natural quote intake conversation instead." + recentInstruction + "\nThe inbound caller ID is " + CALLER_ID + "." },
+    { role: "system", content: KODI_SYSTEM_PROMPT + QUOTE_FLOW_OVERRIDES + "\nTEXT SIMULATION RULE: Do not call save_caller_info or hang_up and do not write data. Continue the natural quote intake conversation instead." + recentInstruction + "\nThe inbound caller ID is " + CALLER_ID + "." },
     { role: "user", content: "The call just connected. Start with the mandatory greeting." }
   ];
   const transcript = [];
@@ -213,7 +223,7 @@ async function runScenario(scenario) {
     messages.push({ role: "assistant", content: reply });
     transcript.push({ role: "assistant", content: reply });
 
-    if (scenario.kind === "repeat" && state.changedAnswered && /(callback|0\s*[, ]\s*4|anything else|pass.*tommy|follow-up)/i.test(reply)) break;
+    if (scenario.kind === "repeat" && state.changedAnswered && /(callback|0\s*[, ]\s*4|anything else|pass.*tommy|follow-up|save your information)/i.test(reply)) break;
     const expectedKeys = Object.keys(scenario.answers || {});
     const allUsed = expectedKeys.length && expectedKeys.every(k => state.used[k]);
     if (allUsed && /(callback|0\s*[, ]\s*4|anything else|summary|pass.*tommy|have i got|is that correct)/i.test(reply)) break;
