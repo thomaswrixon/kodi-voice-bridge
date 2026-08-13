@@ -158,6 +158,44 @@ async function lookupJobSchedule(args) {
       return activity.name && activity.calendar_date;
     });
 
+  const activityDate = function(pattern) {
+    const match = activities.find(function(activity) {
+      return pattern.test(activity.name);
+    });
+    return match ? match.calendar_date : null;
+  };
+  const podsAndSteelDate = activityDate(/pod.*steel/i);
+  const sandUpDate = activityDate(/sand\s*up/i);
+  const drainsDate = activityDate(/drains/i);
+  let supplierGuidance = null;
+
+  if (podsAndSteelDate) {
+    supplierGuidance = supplierGuidance || {};
+    supplierGuidance.pods_and_steel = {
+      status: "confirmed",
+      calendar_date: podsAndSteelDate,
+      instruction: "Pods and steel must be on site by 7:00 a.m. on the confirmed Pod and Steel date. Do not approve a later delivery time.",
+    };
+  }
+
+  if (sandUpDate) {
+    supplierGuidance = supplierGuidance || {};
+    if (drainsDate && drainsDate < sandUpDate) {
+      supplierGuidance.sand = {
+        status: "confirmed_ready",
+        calendar_date: sandUpDate,
+        instruction: "Drains are confirmed before Sand Up. Sand must be on site by 7:00 a.m. on the confirmed Sand Up date.",
+      };
+    } else {
+      supplierGuidance.sand = {
+        status: "not_confirmed_ready",
+        calendar_date: sandUpDate,
+        drains_calendar_date: drainsDate,
+        instruction: "Do not say the job is ready and do not approve a sand delivery. Record a callback because Drains are not confirmed before Sand Up.",
+      };
+    }
+  }
+
   return {
     status: "single_match",
     job: {
@@ -165,8 +203,9 @@ async function lookupJobSchedule(args) {
       address: [job.address, job.suburb].filter(Boolean).join(", "),
     },
     activities: activities,
+    supplier_guidance: supplierGuidance,
     message: activities.length
-      ? "Confirmed activity dates found."
+      ? "Confirmed activity dates found. Any supplier_guidance is mandatory."
       : "The job was found, but no confirmed Labour Allocation dates are recorded.",
   };
 }
