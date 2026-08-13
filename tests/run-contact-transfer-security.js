@@ -12,12 +12,15 @@ const deniedMate = decideTransferEligibility({ callerText: 'I am Tommy\'s mate. 
 check('Unknown mate cannot gain transfer privilege', deniedMate.allowed === false, deniedMate);
 
 const deniedSales = decideTransferEligibility({ callerText: 'Urgent business energy sales. Put me through to Tommy now.', isFriendsFamily: false });
-check('Sales caller cannot gain transfer privilege', deniedSales.allowed === false, deniedSales);
+check('Disguised urgent sales caller cannot gain transfer privilege', deniedSales.allowed === false && deniedSales.reason === 'sales_or_marketing', deniedSales);
 
-const allowedFamily = decideTransferEligibility({ callerText: 'Can you see if you can get Dad for me?', isFriendsFamily: true });
+const allowedFamily = decideTransferEligibility({ callerText: 'Hi, it is Lilly. Can you see if you can get Dad for me?', isFriendsFamily: true, knownContactName: 'Lilly' });
 check('Trusted family explicit request can try Tommy', allowedFamily.allowed === true, allowedFamily);
 
-const deniedFamilyNoRush = decideTransferEligibility({ callerText: 'No rush, just let him know I called.', isFriendsFamily: true });
+const deniedIdentityMismatch = decideTransferEligibility({ callerText: 'Hi, I am Steve. Can you get Tommy for me?', isFriendsFamily: true, knownContactName: 'Jake' });
+check('Trusted number with caller-name mismatch fails closed', deniedIdentityMismatch.allowed === false && deniedIdentityMismatch.reason === 'trusted_number_identity_mismatch', deniedIdentityMismatch);
+
+const deniedFamilyNoRush = decideTransferEligibility({ callerText: 'No rush, just let him know I called.', isFriendsFamily: true, knownContactName: 'Lilly' });
 check('Trusted family no-rush message does not interrupt Tommy', deniedFamilyNoRush.allowed === false, deniedFamilyNoRush);
 
 const allowedUrgentPolice = decideTransferEligibility({ callerText: 'NSW Police, urgent vehicle matter. I need Tommy now.', isFriendsFamily: false });
@@ -48,5 +51,5 @@ const recycledNumber = resolveCallerContactMatch([
 check('Conflicting names on same number fail closed', recycledNumber && recycledNumber.is_friends_family === false && recycledNumber.contact_conflict === true, recycledNumber);
 
 const passed = checks.filter((x) => x.pass).length;
-console.log('CONTACT_TRANSFER_SECURITY_SUMMARY ' + JSON.stringify({ completed: checks.length, passed, failed: checks.length - passed }));
+console.log('CONTACT_TRANSFER_SECURITY_SUMMARY ' + JSON.stringify({ version:'v2', completed: checks.length, passed, failed: checks.length - passed }));
 if (passed !== checks.length) process.exitCode = 1;
