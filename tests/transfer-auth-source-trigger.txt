@@ -1,0 +1,1 @@
+Trigger source deployment after staging start command was pinned to run-transfer-auth-2.js.
