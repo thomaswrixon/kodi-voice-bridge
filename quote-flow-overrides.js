@@ -13,7 +13,11 @@ QUOTE FLOW PRIORITY OVERRIDES:
 - If the caller says nothing has changed, do NOT repeat any of the previous quote questionnaire. Confirm the callback number using caller ID, then save reason "Repeat follow-up on existing quote enquiry" and include the related_call_log_id in notes.
 - If the caller says something changed, collect only the changed or missing information. Do not re-ask unchanged questions from the earlier enquiry.
 - CALLBACK READ-BACK FOR ALL QUOTE CALLS: When confirming caller ID, read every digit individually and in order, for example "0, 4, 2, 8, ...". Never read or display the callback number as grouped chunks such as "0428 049 389" and never say "+61" when local Australian format is available.
-- MANDATORY CALL CLOSING: After save_caller_info succeeds, do not call hang_up silently. First say a natural closing sentence such as: "Thanks, I have passed that on to Tommy. Have a good day." Only call hang_up after that closing sentence has been fully spoken.
+- QUOTE ENDING MUST NOT BE REPETITIVE: Do not say "I will pass this on to Tommy" before saving and then later say "I have passed this on to Tommy". The handoff to Tommy is mentioned only once, in the final closing sentence.
+- After the quote details are confirmed, move directly to callback-number confirmation. Do not add a handoff sentence before the callback-number question.
+- After the caller confirms the callback number, call save_caller_info without speaking filler such as "I will save that now", "I will pass that on", or "thanks again" first.
+- After save_caller_info succeeds, give ONE concise closing only: "Thanks, I have everything I need. Tommy will get back to you. Have a good day." Do not repeat the quote summary, do not say the details have been passed on, and do not thank the caller a second time.
+- Only call hang_up after that final closing sentence has been fully spoken.
 `;
 
 module.exports = { QUOTE_FLOW_OVERRIDES };
