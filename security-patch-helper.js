@@ -67,12 +67,25 @@ function applySecurityPatches(source, replaceOnce) {
       }
       if (msg.type === "input_audio_buffer.speech_started" || msg.type === "input_audio_buffer.speech_stopped") {
         console.log("OpenAI event: " + msg.type);
-        if (msg.type === "input_audio_buffer.speech_stopped" && !initialGreetingComplete) {
-          pendingCallerTurnDuringGreeting = true;
-        } else if (msg.type === "input_audio_buffer.speech_stopped" && !responseActive) {
-          responseActive = true;
-          console.log("Creating one response for completed caller turn");
-          openAiWs.send(JSON.stringify({ type: "response.create" }));
+        if (msg.type === "input_audio_buffer.speech_started") {
+          if (streamSid) {
+            ws.send(JSON.stringify({ event: "clear", streamSid: streamSid }));
+            console.log("Cleared queued Kodi audio so caller has the floor");
+          }
+          if (responseActive) {
+            pendingCallerTurnDuringGreeting = true;
+            openAiWs.send(JSON.stringify({ type: "response.cancel" }));
+            console.log("Cancelled active Kodi response for caller interruption");
+          }
+        }
+        if (msg.type === "input_audio_buffer.speech_stopped") {
+          if (responseActive) {
+            pendingCallerTurnDuringGreeting = true;
+          } else {
+            responseActive = true;
+            console.log("Creating one response for completed caller turn");
+            openAiWs.send(JSON.stringify({ type: "response.create" }));
+          }
         }
       }
 `,
@@ -101,12 +114,12 @@ function applySecurityPatches(source, replaceOnce) {
   source = replaceOnce(
     source,
     `      if (msg.type === "response.function_call_arguments.done") {`,
-    `      if (msg.type === "response.done" && !initialGreetingComplete) {
-        initialGreetingComplete = true;
+    `      if (msg.type === "response.done") {
+        if (!initialGreetingComplete) initialGreetingComplete = true;
         if (pendingCallerTurnDuringGreeting) {
           pendingCallerTurnDuringGreeting = false;
           responseActive = true;
-          console.log("Creating deferred response for caller turn during greeting");
+          console.log("Creating deferred response for interrupted caller turn");
           openAiWs.send(JSON.stringify({ type: "response.create" }));
         }
       }
