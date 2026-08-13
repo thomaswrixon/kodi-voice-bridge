@@ -1,3 +1,6 @@
+const fs = require("fs");
+const path = require("path");
+const Module = require("module");
 const { decideTransferEligibility } = require("../transfer-eligibility");
 
 const originalFetch = global.fetch;
@@ -34,4 +37,20 @@ global.fetch = async function gatedFetch(url, options = {}) {
 const personalModule = require("../personal-call-overrides");
 const { PERSONAL_CALL_HARD_STOPS } = require("../personal-call-hard-stops");
 personalModule.PERSONAL_CALL_OVERRIDES += PERSONAL_CALL_HARD_STOPS;
-require("./run-personal-20-v2");
+
+// Run the unchanged 20-scenario suite, but route save_caller_info arguments
+// through the same deterministic fact-preservation helper intended for live.
+const runnerPath = path.join(__dirname, "run-personal-20-v2.js");
+let runnerSource = fs.readFileSync(runnerPath, "utf8");
+const saveNeedle = "state.saveCalled = true; state.saveArgs = args;";
+if (!runnerSource.includes(saveNeedle)) {
+  throw new Error("Could not patch personal runner save layer");
+}
+runnerSource = runnerSource.replace(
+  saveNeedle,
+  'state.saveCalled = true; state.saveArgs = require("../personal-save-enrichment").enrichSaveCallerInfo(args, transcript);'
+);
+const runnerModule = new Module(runnerPath, module);
+runnerModule.filename = runnerPath;
+runnerModule.paths = Module._nodeModulePaths(path.dirname(runnerPath));
+runnerModule._compile(runnerSource, runnerPath);
