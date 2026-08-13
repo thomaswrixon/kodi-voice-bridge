@@ -430,8 +430,10 @@ wss.on("connection", (twilioWs) => {
               turn_detection: {
                 type: "server_vad",
                 threshold: 0.5,
-                prefix_padding_ms: 300,
-                silence_duration_ms: 700,
+                prefix_padding_ms: 400,
+                silence_duration_ms: 1100,
+                create_response: true,
+                interrupt_response: true,
               },
             },
             output: {
@@ -521,6 +523,12 @@ wss.on("connection", (twilioWs) => {
       }
       if (msg.type === "input_audio_buffer.speech_started" || msg.type === "input_audio_buffer.speech_stopped") {
         console.log("OpenAI event: " + msg.type);
+      }
+      if (msg.type === "input_audio_buffer.speech_started" && streamSid) {
+        // True phone barge-in: discard any Kodi audio already queued at Twilio
+        // so the caller immediately gets the floor when they begin speaking.
+        ws.send(JSON.stringify({ event: "clear", streamSid: streamSid }));
+        console.log("Twilio outbound audio cleared for caller interruption");
       }
 
       if (msg.type === "response.output_audio.delta" && msg.delta) {
