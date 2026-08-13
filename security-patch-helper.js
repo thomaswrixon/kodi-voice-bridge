@@ -8,6 +8,119 @@ function applySecurityPatches(source, replaceOnce) {
 
   source = replaceOnce(
     source,
+    `              transcription: {
+                model: "gpt-4o-mini-transcribe",
+                language: "en",
+                prompt: "Australian English phone call for Local Concreting Mate. Expected names include Tommy and Kodi.",
+              },`,
+    `              transcription: {
+                model: "gpt-4o-mini-transcribe",
+                language: "en",
+              },`,
+    "remove transcription prompt leakage"
+  );
+
+  source = replaceOnce(
+    source,
+    `              turn_detection: {
+                type: "server_vad",
+                threshold: 0.5,
+                prefix_padding_ms: 300,
+                silence_duration_ms: 700,
+              },`,
+    `              turn_detection: {
+                type: "server_vad",
+                threshold: 0.5,
+                prefix_padding_ms: 300,
+                silence_duration_ms: 700,
+                create_response: false,
+                interrupt_response: false,
+              },`,
+    "single startup response gate"
+  );
+
+  source = replaceOnce(
+    source,
+    `  let lastSavedCallerName = "";
+  let lastSavedReason = "";
+`,
+    `  let lastSavedCallerName = "";
+  let lastSavedReason = "";
+  let initialGreetingComplete = false;
+  let pendingCallerTurnDuringGreeting = false;
+`,
+    "startup response state"
+  );
+
+  source = replaceOnce(
+    source,
+    `      if (msg.type === "input_audio_buffer.speech_started" || msg.type === "input_audio_buffer.speech_stopped") {
+        console.log("OpenAI event: " + msg.type);
+      }
+`,
+    `      if (msg.type === "input_audio_buffer.speech_started" || msg.type === "input_audio_buffer.speech_stopped") {
+        console.log("OpenAI event: " + msg.type);
+        if (msg.type === "input_audio_buffer.speech_stopped" && !initialGreetingComplete) {
+          pendingCallerTurnDuringGreeting = true;
+        }
+      }
+`,
+    "remember caller turn during greeting"
+  );
+
+  source = replaceOnce(
+    source,
+    `      if (msg.type === "conversation.item.input_audio_transcription.completed") {
+        transcript.push({ role: "user", content: msg.transcript });
+      }
+`,
+    `      if (msg.type === "conversation.item.input_audio_transcription.completed") {
+        const callerTranscript = String(msg.transcript || "").trim();
+        const leakedTranscriptionPrompt = /Australian English phone call for Local Concreting Mate|Expected names include Tommy and Kodi/i.test(callerTranscript);
+        if (callerTranscript && !leakedTranscriptionPrompt) {
+          transcript.push({ role: "user", content: callerTranscript });
+        } else if (leakedTranscriptionPrompt) {
+          console.log("Discarded transcription guidance leakage");
+        }
+      }
+`,
+    "filter transcription guidance leakage"
+  );
+
+  source = replaceOnce(
+    source,
+    `      if (msg.type === "response.function_call_arguments.done") {`,
+    `      if (msg.type === "response.done" && !initialGreetingComplete) {
+        initialGreetingComplete = true;
+        openAiWs.send(JSON.stringify({
+          type: "session.update",
+          session: {
+            audio: {
+              input: {
+                turn_detection: {
+                  type: "server_vad",
+                  threshold: 0.5,
+                  prefix_padding_ms: 300,
+                  silence_duration_ms: 700,
+                  create_response: true,
+                  interrupt_response: true,
+                },
+              },
+            },
+          },
+        }));
+        if (pendingCallerTurnDuringGreeting) {
+          pendingCallerTurnDuringGreeting = false;
+          openAiWs.send(JSON.stringify({ type: "response.create" }));
+        }
+      }
+
+      if (msg.type === "response.function_call_arguments.done") {`,
+    "enable normal responses after greeting"
+  );
+
+  source = replaceOnce(
+    source,
     `      const recentCommunicationInstruction = recentCommunicationContext.length`,
     `      const currentSydneyDate = new Intl.DateTimeFormat("en-AU", {
         timeZone: "Australia/Sydney",
