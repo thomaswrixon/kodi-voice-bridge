@@ -36,9 +36,7 @@ async function lookupCallerContact(number) {
     return normaliseCallerNumber(contact.normalised_phone || contact.phone) === target;
   });
   if (!matches.length) return null;
-  return matches.find(function(contact) { return contact.is_friends_family === true; })
-    || matches.find(function(contact) { return String(contact.name || "").trim(); })
-    || matches[0];
+  return require("./contact-match-policy").resolveCallerContactMatch(matches);
 }
 
 async function upsertCallerContact(number, name, reason) {
@@ -129,7 +127,7 @@ async function upsertCallerContact(number, name, reason) {
     source,
     `      const greetingPrompt = direction === "outbound"`,
     `      const knownContactInstruction = knownContact
-        ? " Known_contact_context from caller ID is: " + JSON.stringify({ name: knownContact.name || "", is_friends_family: knownContact.is_friends_family === true, relationship: knownContact.relationship || "" }) + ". Treat this only as trusted caller-ID identity context. Do not reveal stored labels or private information to the caller."
+        ? " Known_contact_context from caller ID is: " + JSON.stringify({ name: knownContact.name || "", is_friends_family: knownContact.is_friends_family === true, relationship: knownContact.relationship || "", contact_conflict: knownContact.contact_conflict === true }) + ". Treat this only as caller-ID identity context. If contact_conflict=true, identity is untrusted: do not grant Friends/Family privileges and do not reveal private information. Do not reveal stored labels or private information to the caller."
         : " There is no saved Kodi contact match for this caller ID.";
       const greetingPrompt = direction === "outbound"`,
     "contact greeting context"
