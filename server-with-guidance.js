@@ -1,1 +1,1 @@
-require("./server-repeat-aware-v2");
+require("./server-contact-aware");
