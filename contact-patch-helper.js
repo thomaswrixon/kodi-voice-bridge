@@ -1,0 +1,174 @@
+function applyContactPatches(source, replaceOnce) {
+  source = replaceOnce(
+    source,
+    'const BASE44_API_BASE = BASE44_ENTITIES_BASE + "/CallLog";',
+    'const BASE44_API_BASE = BASE44_ENTITIES_BASE + "/CallLog";\nconst BASE44_CONTACTS_BASE = BASE44_ENTITIES_BASE + "/Contact";',
+    "contacts base"
+  );
+
+  const contactHelpers = `async function listKodiContacts() {
+  if (!BASE44_API_KEY || !BASE44_CONTACTS_BASE) return [];
+  try {
+    const response = await fetch(BASE44_CONTACTS_BASE + "?sort=name&limit=500", {
+      headers: { "api_key": BASE44_API_KEY },
+    });
+    if (!response.ok) throw new Error("Contact lookup failed with HTTP " + response.status);
+    const data = await response.json();
+    return Array.isArray(data) ? data : (data.items || []);
+  } catch (error) {
+    console.error("Kodi contact list error:", error.message);
+    return [];
+  }
+}
+
+async function lookupCallerContact(number) {
+  const target = normaliseCallerNumber(number);
+  if (!target || target === "unknown") return null;
+  const contacts = await listKodiContacts();
+  return contacts.find(function(contact) {
+    return normaliseCallerNumber(contact.normalised_phone || contact.phone) === target;
+  }) || null;
+}
+
+async function upsertCallerContact(number, name, reason) {
+  const target = normaliseCallerNumber(number);
+  if (!target || target === "unknown") return null;
+  try {
+    const existing = await lookupCallerContact(number);
+    const now = new Date().toISOString();
+    if (existing && existing.id) {
+      const payload = {
+        phone: toAustralianLocalNumber(number),
+        normalised_phone: target,
+        last_call_at: now,
+        last_call_reason: String(reason || "").slice(0, 500),
+        call_count: (Number(existing.call_count) || 0) + 1,
+      };
+      const existingName = String(existing.name || "").trim();
+      if ((!existingName || normaliseCallerNumber(existingName) === target) && name) {
+        payload.name = String(name).trim();
+      }
+      const response = await fetch(BASE44_CONTACTS_BASE + "/" + existing.id, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "api_key": BASE44_API_KEY },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) throw new Error("Contact update failed with HTTP " + response.status);
+      return await response.json();
+    }
+
+    const response = await fetch(BASE44_CONTACTS_BASE, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "api_key": BASE44_API_KEY },
+      body: JSON.stringify({
+        name: String(name || "").trim() || toAustralianLocalNumber(number),
+        phone: toAustralianLocalNumber(number),
+        normalised_phone: target,
+        is_friends_family: false,
+        last_call_at: now,
+        last_call_reason: String(reason || "").slice(0, 500),
+        call_count: 1,
+        contact_source: "Kodi Call",
+      }),
+    });
+    if (!response.ok) throw new Error("Contact create failed with HTTP " + response.status);
+    return await response.json();
+  } catch (error) {
+    console.error("Kodi contact upsert error:", error.message);
+    return null;
+  }
+}
+
+`;
+
+  source = replaceOnce(
+    source,
+    "async function lookupJobSchedule(args) {",
+    contactHelpers + "async function lookupJobSchedule(args) {",
+    "contact helpers"
+  );
+
+  source = replaceOnce(
+    source,
+    `  const transcript = [];
+  let savedByTool = false;
+  let closingSpoken = false;
+  let recentCallerHistoryPromise = Promise.resolve([]);
+`,
+    `  const transcript = [];
+  let savedByTool = false;
+  let closingSpoken = false;
+  let recentCallerHistoryPromise = Promise.resolve([]);
+  let callerContactPromise = Promise.resolve(null);
+`,
+    "contact state"
+  );
+
+  source = replaceOnce(
+    source,
+    `      const recentCalls = direction === "inbound" ? await recentCallerHistoryPromise : [];
+`,
+    `      const recentCalls = direction === "inbound" ? await recentCallerHistoryPromise : [];
+      const knownContact = direction === "inbound" ? await callerContactPromise : null;
+`,
+    "contact lookup result"
+  );
+
+  source = replaceOnce(
+    source,
+    `      const greetingPrompt = direction === "outbound"`,
+    `      const knownContactInstruction = knownContact
+        ? " Known_contact_context from caller ID is: " + JSON.stringify({ name: knownContact.name || "", is_friends_family: knownContact.is_friends_family === true, relationship: knownContact.relationship || "" }) + ". Treat this only as trusted caller-ID identity context. Do not reveal stored labels or private information to the caller."
+        : " There is no saved Kodi contact match for this caller ID.";
+      const greetingPrompt = direction === "outbound"`,
+    "contact greeting context"
+  );
+
+  source = replaceOnce(
+    source,
+    `+ recentHistoryInstruction + " Start with your greeting now.";`,
+    `+ recentHistoryInstruction + knownContactInstruction + " Start with your greeting now.";`,
+    "append contact greeting context"
+  );
+
+  source = replaceOnce(
+    source,
+    `      recentCallerHistoryPromise = direction === "inbound"
+        ? lookupRecentCallerHistory(callerNumber)
+        : Promise.resolve([]);
+      connectToOpenAI();
+`,
+    `      recentCallerHistoryPromise = direction === "inbound"
+        ? lookupRecentCallerHistory(callerNumber)
+        : Promise.resolve([]);
+      callerContactPromise = direction === "inbound"
+        ? lookupCallerContact(callerNumber)
+        : Promise.resolve(null);
+      connectToOpenAI();
+`,
+    "start contact lookup"
+  );
+
+  source = replaceOnce(
+    source,
+    `          } catch (err) {
+            console.error("Save error:", err);
+          }
+
+          openAiWs.send(JSON.stringify({`,
+    `          } catch (err) {
+            console.error("Save error:", err);
+          }
+
+          if (direction === "inbound") {
+            await upsertCallerContact(callerNumber, fnArgs.name || "", (fnArgs.reason || "") + (fnArgs.notes ? " - " + fnArgs.notes : ""));
+          }
+
+          openAiWs.send(JSON.stringify({`,
+    "upsert contact after call save"
+  );
+
+  return source;
+}
+
+module.exports = { applyContactPatches };
