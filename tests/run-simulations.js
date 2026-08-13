@@ -21,7 +21,7 @@ const lookupTool = {
       properties: {
         search_term: { type: "string" },
         address: { type: "string" },
-        job_number: { type: "string" }
+        builder_job_number: { type: "string", description: "Builder external job number; never an internal LCM job number" }
       },
       required: ["search_term"]
     }
@@ -119,7 +119,7 @@ async function lookupJobSchedule(args) {
     }
   }
 
-  if (args.job_number) query.job_number = String(args.job_number);
+  if (args.builder_job_number) query.builder_job_number = String(args.builder_job_number);
   if (address) query.address = address;
   if (suburb) query.suburb = suburb;
 
@@ -160,7 +160,7 @@ async function lookupJobSchedule(args) {
   if (jobs.length > 1) {
     return {
       status: "multiple_matches",
-      message: "Ask for the full address or job number.",
+      message: "Ask for the full address or builder job number.",
       matches: jobs.slice(0, 10).map(job => ({
         job_number: job.job_number || "",
         address: [job.address, job.suburb].filter(Boolean).join(", ")
@@ -168,15 +168,43 @@ async function lookupJobSchedule(args) {
     };
   }
   const job = jobs[0];
+  const activities = (Array.isArray(job.labour_activities) ? job.labour_activities : [])
+    .map(a => ({ name: a.title || "", calendar_date: a.calendar_date || null }))
+    .filter(a => a.name && a.calendar_date);
+  const dateFor = pattern => activities.find(a => pattern.test(a.name))?.calendar_date || null;
+  const podsAndSteelDate = dateFor(/pod.*steel/i);
+  const sandUpDate = dateFor(/sand\s*up/i);
+  const drainsDate = dateFor(/drains/i);
+  const supplierGuidance = {};
+  if (podsAndSteelDate) {
+    supplierGuidance.pods_and_steel = {
+      status: "confirmed",
+      calendar_date: podsAndSteelDate,
+      instruction: "Pods and steel must be on site by 7:00 a.m. on the confirmed Pod and Steel date. Do not approve a later delivery time."
+    };
+  }
+  if (sandUpDate) {
+    supplierGuidance.sand = drainsDate && drainsDate < sandUpDate
+      ? {
+          status: "confirmed_ready",
+          calendar_date: sandUpDate,
+          instruction: "Drains are confirmed before Sand Up. Sand must be on site by 7:00 a.m. on the confirmed Sand Up date."
+        }
+      : {
+          status: "not_confirmed_ready",
+          calendar_date: sandUpDate,
+          drains_calendar_date: drainsDate,
+          instruction: "Do not say the job is ready and do not approve a sand delivery. Record a callback because Drains are not confirmed before Sand Up."
+        };
+  }
   return {
     status: "single_match",
     job: {
       job_number: job.job_number || "",
       address: [job.address, job.suburb].filter(Boolean).join(", ")
     },
-    activities: (Array.isArray(job.labour_activities) ? job.labour_activities : [])
-      .map(a => ({ name: a.title || "", calendar_date: a.calendar_date || null }))
-      .filter(a => a.name && a.calendar_date)
+    activities,
+    supplier_guidance: Object.keys(supplierGuidance).length ? supplierGuidance : null
   };
 }
 
@@ -332,7 +360,11 @@ async function runScenario(scenario) {
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const callerText = await callerStep(scenario, transcript);
-    if (!callerText || callerText === "END_CALL") break;
+    if (!callerText || /(?:^|\\s)END_CALL\\s*$/.test(callerText)) {
+      const finalCallerText = String(callerText || "").replace(/\\s*END_CALL\\s*$/, "").trim();
+      if (finalCallerText) transcript.push({ role: "caller", content: finalCallerText });
+      break;
+    }
     transcript.push({ role: "caller", content: callerText });
     kodiMessages.push({ role: "user", content: callerText });
     const beforeTools = kodiMessages.filter(m => m.role === "tool").length;
