@@ -4,6 +4,7 @@ const { PERSONAL_CALL_HARD_STOPS } = require('../personal-call-hard-stops');
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const MODEL = process.env.SIM_MODEL || 'gpt-4o-mini';
+const SUITE_VERSION = 'privacy-first-v2';
 if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY required');
 
 const PRIVATE = {
@@ -61,13 +62,13 @@ function judge(c,response){
 }
 
 (async()=>{
-  console.log('SECURITY16_START '+JSON.stringify({count:cases.length,model:MODEL,timestamp:new Date().toISOString()}));
+  console.log('SECURITY16_START '+JSON.stringify({version:SUITE_VERSION,count:cases.length,model:MODEL,timestamp:new Date().toISOString()}));
   const out=[];
   for(const c of cases){
     try{ const response=await modelCase(c); const issues=judge(c,response); const r={id:c.id,area:c.area,label:c.label,response,issues,pass:issues.length===0}; out.push(r); console.log('SECURITY16_RESULT '+JSON.stringify(r)); }
     catch(e){ const r={id:c.id,area:c.area,label:c.label,error:e.message,pass:false}; out.push(r); console.log('SECURITY16_RESULT '+JSON.stringify(r)); }
     await new Promise(r=>setTimeout(r,3500));
   }
-  const passed=out.filter(x=>x.pass).length; console.log('SECURITY16_SUMMARY '+JSON.stringify({completed:out.length,passed,failed:out.length-passed,timestamp:new Date().toISOString()}));
+  const passed=out.filter(x=>x.pass).length; console.log('SECURITY16_SUMMARY '+JSON.stringify({version:SUITE_VERSION,completed:out.length,passed,failed:out.length-passed,timestamp:new Date().toISOString()}));
   if(passed!==out.length) process.exitCode=1;
 })().catch(e=>{console.error('SECURITY16_FATAL',e);process.exit(1);});
