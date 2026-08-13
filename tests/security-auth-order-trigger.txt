@@ -1,0 +1,1 @@
+Rerun transfer-authorisation tests after removing pre-announcement rule.
