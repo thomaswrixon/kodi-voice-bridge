@@ -63,5 +63,5 @@ const afterCooldown = cooldown.check('0412345678');
 check('Caller can be attempted again after cooldown expires', afterCooldown.allowed === true, afterCooldown);
 
 const passed = checks.filter((x) => x.pass).length;
-console.log('CONTACT_TRANSFER_SECURITY_SUMMARY ' + JSON.stringify({ version:'v3', completed: checks.length, passed, failed: checks.length - passed }));
+console.log('CONTACT_TRANSFER_SECURITY_SUMMARY ' + JSON.stringify({ version:'v4-final', completed: checks.length, passed, failed: checks.length - passed }));
 if (passed !== checks.length) process.exitCode = 1;
