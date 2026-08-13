@@ -1,1 +1,1 @@
-Trigger source deployment for final full staging regression after the transfer authorisation fix.
+Trigger source deployment for the 20-call personal regression after transfer authorisation hardening.
