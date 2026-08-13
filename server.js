@@ -50,7 +50,7 @@ async function lookupJobSchedule(args) {
   const searchTerm = String(args.search_term || "").trim();
   let address = String(args.address || "").trim();
   let suburb = "";
-  const jobNumber = String(args.job_number || "").trim();
+  const builderJobNumber = String(args.builder_job_number || args.job_number || "").trim();
 
   if (address) {
     const commaIndex = address.lastIndexOf(",");
@@ -73,12 +73,12 @@ async function lookupJobSchedule(args) {
     }
   }
 
-  if (!searchTerm && !address && !jobNumber) {
-    return { status: "need_more_detail", message: "Ask for the suburb, full address, or job number." };
+  if (!searchTerm && !address && !builderJobNumber) {
+    return { status: "need_more_detail", message: "Ask for the builder job number, suburb, or full address." };
   }
 
   const query = { limit: 20 };
-  if (jobNumber) query.job_number = jobNumber;
+  if (builderJobNumber) query.builder_job_number = builderJobNumber;
   if (address) query.address = address;
   if (suburb) query.suburb = suburb;
 
@@ -96,38 +96,47 @@ async function lookupJobSchedule(args) {
     }
   }
 
-  const response = await fetch(LCM_LOOKUP_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Kodi-Shared-Secret": LCM_LOOKUP_SECRET,
-    },
-    body: JSON.stringify({ action: "searchJobs", query: query }),
-  });
-
-  const bodyText = await response.text();
-  let body;
-  try {
-    body = bodyText ? JSON.parse(bodyText) : {};
-  } catch (error) {
-    throw new Error("LCM lookup returned invalid JSON");
+  async function runJobSearch(searchQuery) {
+    const response = await fetch(LCM_LOOKUP_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Kodi-Shared-Secret": LCM_LOOKUP_SECRET,
+      },
+      body: JSON.stringify({ action: "searchJobs", query: searchQuery }),
+    });
+    const bodyText = await response.text();
+    let body;
+    try {
+      body = bodyText ? JSON.parse(bodyText) : {};
+    } catch (error) {
+      throw new Error("LCM lookup returned invalid JSON");
+    }
+    if (response.status === 404 && body && body.error && body.error.code === "NO_MATCH") return [];
+    if (!response.ok) throw new Error("LCM lookup failed: " + response.status + " " + bodyText.slice(0, 500));
+    return Array.isArray(body.jobs) ? body.jobs : [];
   }
 
-  if (response.status === 404 && body && body.error && body.error.code === "NO_MATCH") {
-    return { status: "not_found", message: "No matching LCM job was found." };
+  let jobs = await runJobSearch(query);
+  if (!jobs.length && builderJobNumber) {
+    const compactBuilderNumber = builderJobNumber.replace(/[^A-Za-z0-9]/g, "");
+    if (compactBuilderNumber && compactBuilderNumber !== builderJobNumber) {
+      jobs = await runJobSearch(Object.assign({}, query, { builder_job_number: compactBuilderNumber }));
+    }
   }
-  if (!response.ok) {
-    throw new Error("LCM lookup failed: " + response.status + " " + bodyText.slice(0, 500));
+  if (!jobs.length && builderJobNumber) {
+    const legacyQuery = Object.assign({}, query);
+    delete legacyQuery.builder_job_number;
+    legacyQuery.job_number = builderJobNumber;
+    jobs = await runJobSearch(legacyQuery);
   }
-
-  const jobs = Array.isArray(body.jobs) ? body.jobs : [];
   if (jobs.length === 0) {
     return { status: "not_found", message: "No matching LCM job was found." };
   }
   if (jobs.length > 1) {
     return {
       status: "multiple_matches",
-      message: "Ask the caller for the full address or job number.",
+      message: "Ask the caller for the full address or builder job number.",
       matches: jobs.slice(0, 10).map(function(job) {
         return {
           job_number: job.job_number || "",
@@ -397,13 +406,13 @@ wss.on("connection", (twilioWs) => {
             {
               type: "function",
               name: "lookup_job_schedule",
-              description: "Search the live LCM app for a job and all confirmed Labour Allocation activity dates. Use this for customer or supplier questions about schedules, site start, Formwork, Sand Up, Drains, Pod and Steel, Pour Concrete, delivery timing, or job readiness. If multiple jobs are returned, ask for the full address or job number and call this tool again.",
+              description: "Search the live LCM app for a job and confirmed Labour Allocation dates. Search by builder job number or address. Never ask an external caller for an LCM job number. If multiple jobs are returned, ask for the full address or builder job number.",
               parameters: {
                 type: "object",
                 properties: {
-                  search_term: { type: "string", description: "The suburb, partial address, full address, builder number, or LCM job number stated by the caller" },
+                  search_term: { type: "string", description: "The suburb, partial address, full address, or builder job number stated by the caller" },
                   address: { type: "string", description: "Full or partial street address when the caller provides it" },
-                  job_number: { type: "string", description: "LCM or builder job number when the caller provides it" },
+                  builder_job_number: { type: "string", description: "The builder's external job number, preserving punctuation when possible" },
                 },
                 required: ["search_term"],
               },
