@@ -9,12 +9,19 @@ function applyContactPatches(source, replaceOnce) {
   const contactHelpers = `async function listKodiContacts() {
   if (!BASE44_API_KEY || !BASE44_CONTACTS_BASE) return [];
   try {
-    const response = await fetch(BASE44_CONTACTS_BASE + "?sort=name&limit=500", {
-      headers: { "api_key": BASE44_API_KEY },
-    });
-    if (!response.ok) throw new Error("Contact lookup failed with HTTP " + response.status);
-    const data = await response.json();
-    return Array.isArray(data) ? data : (data.items || []);
+    const rows = [];
+    const pageSize = 500;
+    for (let skip = 0; skip <= 10000; skip += pageSize) {
+      const response = await fetch(BASE44_CONTACTS_BASE + "?sort=name&limit=" + pageSize + "&skip=" + skip, {
+        headers: { "api_key": BASE44_API_KEY },
+      });
+      if (!response.ok) throw new Error("Contact lookup failed with HTTP " + response.status);
+      const data = await response.json();
+      const page = Array.isArray(data) ? data : (data.items || []);
+      rows.push.apply(rows, page);
+      if (page.length < pageSize) break;
+    }
+    return rows;
   } catch (error) {
     console.error("Kodi contact list error:", error.message);
     return [];
@@ -25,9 +32,13 @@ async function lookupCallerContact(number) {
   const target = normaliseCallerNumber(number);
   if (!target || target === "unknown") return null;
   const contacts = await listKodiContacts();
-  return contacts.find(function(contact) {
+  const matches = contacts.filter(function(contact) {
     return normaliseCallerNumber(contact.normalised_phone || contact.phone) === target;
-  }) || null;
+  });
+  if (!matches.length) return null;
+  return matches.find(function(contact) { return contact.is_friends_family === true; })
+    || matches.find(function(contact) { return String(contact.name || "").trim(); })
+    || matches[0];
 }
 
 async function upsertCallerContact(number, name, reason) {
