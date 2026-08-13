@@ -360,8 +360,8 @@ async function runScenario(scenario) {
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const callerText = await callerStep(scenario, transcript);
-    if (!callerText || /(?:^|\\s)END_CALL\\s*$/.test(callerText)) {
-      const finalCallerText = String(callerText || "").replace(/\\s*END_CALL\\s*$/, "").trim();
+    if (!callerText || /(?:^|\s)END_CALL\s*$/.test(callerText)) {
+      const finalCallerText = String(callerText || "").replace(/\s*END_CALL\s*$/, "").trim();
       if (finalCallerText) transcript.push({ role: "caller", content: finalCallerText });
       break;
     }
