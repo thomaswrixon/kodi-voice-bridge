@@ -8,6 +8,28 @@ function applySecurityPatches(source, replaceOnce) {
 
   source = replaceOnce(
     source,
+    `      const recentCommunicationInstruction = recentCommunicationContext.length`,
+    `      const currentSydneyDate = new Intl.DateTimeFormat("en-AU", {
+        timeZone: "Australia/Sydney",
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      }).format(new Date());
+      const currentSydneyDateInstruction = " current_sydney_date=" + currentSydneyDate + ".";
+      const recentCommunicationInstruction = recentCommunicationContext.length`,
+    "current Sydney date context"
+  );
+
+  source = replaceOnce(
+    source,
+    `+ recentHistoryInstruction + knownContactInstruction + recentCommunicationInstruction + resumeInstruction;`,
+    `+ recentHistoryInstruction + knownContactInstruction + recentCommunicationInstruction + currentSydneyDateInstruction + resumeInstruction;`,
+    "append current Sydney date context"
+  );
+
+  source = replaceOnce(
+    source,
     `      recentCommunicationPromise = direction === "inbound"
         ? callerContactPromise.then(function(contact) { return lookupRecentCommunicationContext(contact); }).catch(function() { return []; })
         : Promise.resolve([]);`,
