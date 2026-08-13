@@ -16,7 +16,7 @@ function claimedFirstName(text) {
 function decideTransferEligibility({ callerText = "", isFriendsFamily = false, knownContactName = "" } = {}) {
   const text = normalise(callerText);
 
-  const isSales = /(sales offer|telemarket|marketing|switch(?:ing)? electricity|energy solutions|cold call|advertis)/i.test(text);
+  const isSales = /(sales offer|sales call|sales pitch|sales rep|sales representative|business energy sales|electricity sales|solar sales|telemarket|marketing|switch(?:ing)? electricity|energy solutions|cold call|advertis|selling (?:a|an|our)|trying to sell)/i.test(text);
   if (isSales) return { allowed: false, reason: "sales_or_marketing" };
 
   const claimed = claimedFirstName(text);
