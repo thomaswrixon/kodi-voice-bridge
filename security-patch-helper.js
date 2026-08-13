@@ -125,13 +125,24 @@ function applySecurityPatches(source, replaceOnce) {
       const knownContact = direction === "inbound" ? await callerContactPromise : null;
       const recentCommunicationContext = direction === "inbound" ? await recentCommunicationPromise : [];
 `,
-    `      const knownContact = direction === "inbound" ? await callerContactPromise : null;
-      const recentCalls = direction === "inbound" && !(knownContact && knownContact.is_owner === true)
-        ? await recentCallerHistoryPromise
-        : [];
-      const recentCommunicationContext = direction === "inbound" && !(knownContact && knownContact.is_owner === true)
-        ? await recentCommunicationPromise
-        : [];
+    `      const withinGreetingDeadline = function(promise, fallback) {
+        return Promise.race([
+          promise,
+          new Promise(function(resolve) {
+            setTimeout(function() { resolve(fallback); }, 800);
+          }),
+        ]);
+      };
+      const greetingContext = direction === "inbound"
+        ? await Promise.all([
+            withinGreetingDeadline(callerContactPromise, null),
+            withinGreetingDeadline(recentCallerHistoryPromise, []),
+            withinGreetingDeadline(recentCommunicationPromise, []),
+          ])
+        : [null, [], []];
+      const knownContact = greetingContext[0];
+      const recentCalls = !(knownContact && knownContact.is_owner === true) ? greetingContext[1] : [];
+      const recentCommunicationContext = !(knownContact && knownContact.is_owner === true) ? greetingContext[2] : [];
 `,
     "suppress polluted owner context"
   );

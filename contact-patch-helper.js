@@ -6,27 +6,66 @@ function applyContactPatches(source, replaceOnce) {
     "contacts base"
   );
 
-  const contactHelpers = `async function listKodiContacts() {
+  const contactHelpers = `let kodiContactsCache = [];
+let kodiContactsCacheLoadedAt = 0;
+let kodiContactsRefreshPromise = null;
+const KODI_CONTACT_CACHE_TTL_MS = 5 * 60 * 1000;
+const KODI_CONTACT_COLD_START_MS = 800;
+
+async function fetchKodiContactsFromBase44() {
   if (!BASE44_API_KEY || !BASE44_CONTACTS_BASE) return [];
-  try {
-    const rows = [];
-    const pageSize = 500;
-    for (let skip = 0; skip <= 10000; skip += pageSize) {
-      const response = await fetch(BASE44_CONTACTS_BASE + "?sort=name&limit=" + pageSize + "&skip=" + skip, {
-        headers: { "api_key": BASE44_API_KEY },
-      });
-      if (!response.ok) throw new Error("Contact lookup failed with HTTP " + response.status);
-      const data = await response.json();
-      const page = Array.isArray(data) ? data : (data.items || []);
-      rows.push.apply(rows, page);
-      if (page.length < pageSize) break;
-    }
-    return rows;
-  } catch (error) {
-    console.error("Kodi contact list error:", error.message);
-    return [];
+  const rows = [];
+  const pageSize = 500;
+  for (let skip = 0; skip <= 10000; skip += pageSize) {
+    const response = await fetch(BASE44_CONTACTS_BASE + "?sort=name&limit=" + pageSize + "&skip=" + skip, {
+      headers: { "api_key": BASE44_API_KEY },
+    });
+    if (!response.ok) throw new Error("Contact lookup failed with HTTP " + response.status);
+    const data = await response.json();
+    const page = Array.isArray(data) ? data : (data.items || []);
+    rows.push.apply(rows, page);
+    if (page.length < pageSize) break;
   }
+  return rows;
 }
+
+function refreshKodiContactsCache() {
+  if (kodiContactsRefreshPromise) return kodiContactsRefreshPromise;
+  kodiContactsRefreshPromise = fetchKodiContactsFromBase44()
+    .then(function(rows) {
+      kodiContactsCache = rows;
+      kodiContactsCacheLoadedAt = Date.now();
+      console.log("Kodi contact cache refreshed: " + rows.length + " contacts");
+      return rows;
+    })
+    .catch(function(error) {
+      console.error("Kodi contact cache refresh error:", error.message);
+      return kodiContactsCache;
+    })
+    .finally(function() {
+      kodiContactsRefreshPromise = null;
+    });
+  return kodiContactsRefreshPromise;
+}
+
+async function listKodiContacts() {
+  if (kodiContactsCache.length || kodiContactsCacheLoadedAt) {
+    if (Date.now() - kodiContactsCacheLoadedAt >= KODI_CONTACT_CACHE_TTL_MS) {
+      refreshKodiContactsCache();
+    }
+    return kodiContactsCache;
+  }
+  return Promise.race([
+    refreshKodiContactsCache(),
+    new Promise(function(resolve) {
+      setTimeout(function() { resolve([]); }, KODI_CONTACT_COLD_START_MS);
+    }),
+  ]);
+}
+
+setImmediate(function() {
+  refreshKodiContactsCache();
+});
 
 async function lookupCallerContact(number) {
   const target = normaliseCallerNumber(number);
