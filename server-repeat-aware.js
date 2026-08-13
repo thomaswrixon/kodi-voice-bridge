@@ -11,13 +11,14 @@ promptModule.KODI_SYSTEM_PROMPT += `
 REPEAT CALLER / QUOTE FOLLOW-UP RULES:
 - The phone system may provide recent_call_history for the same inbound caller ID from the previous 14 days.
 - Use recent_call_history only to avoid making a caller repeat information they already gave LCM. Never assume two calls are about the same enquiry solely because the phone number matches.
-- After the caller gives their name and reason, if the recent history clearly contains a matching quote, crack repair, concrete repair, driveway, slab, or other quote enquiry, ask one short confirmation question such as: "Are you following up on the same quote about [brief prior summary]?"
+- After the caller gives their name and reason, if the recent history clearly contains a matching quote, crack repair, concrete repair, driveway, slab, or other quote enquiry, ask one short confirmation question that includes the work type and the previous suburb/address when available, for example: "Is this the same driveway crack repair job in Belmont North?"
 - If they confirm it is the same enquiry, do NOT repeat the previous quote questionnaire or re-collect details already present in the recent history. Ask only: "Has anything changed since you last called?"
 - If nothing has changed, acknowledge the follow-up and save it as a repeat follow-up. In save_caller_info use reason "Repeat follow-up on existing quote enquiry" and include the related_call_log_id from the matching recent history in notes, plus whether anything changed.
 - If something has changed, collect only the changed or missing information, then save the follow-up linked to the previous call log ID.
 - If it is a different request, treat it as a new enquiry and do not reuse unrelated previous-call details.
 - If more than one recent enquiry could match, briefly ask which one they mean rather than guessing.
 - Never read unrelated previous-call details back to the caller.
+- After save_caller_info succeeds, always speak a natural closing sentence before calling hang_up. Never end the call immediately after the caller confirms their callback number.
 `;
 promptModule.KODI_SYSTEM_PROMPT += QUOTE_FLOW_OVERRIDES;
 
@@ -106,9 +107,10 @@ source = replaceOnce(
 `,
   `  const transcript = [];
   let savedByTool = false;
+  let closingSpoken = false;
   let recentCallerHistoryPromise = Promise.resolve([]);
 `,
-  "history promise"
+  "history and closing state"
 );
 
 source = replaceOnce(
@@ -128,13 +130,80 @@ source = replaceOnce(
   `      const localCallerNumber = toAustralianLocalNumber(callerNumber);
       const recentCalls = direction === "inbound" ? await recentCallerHistoryPromise : [];
       const recentHistoryInstruction = recentCalls.length
-        ? " Recent_call_history for this same caller ID from the last 14 days is: " + JSON.stringify(recentCalls) + ". Use this history only after the caller explains why they are calling. If their reason appears to be the same quote or repair enquiry, confirm that it is the same enquiry before reusing the prior details. If they confirm it is the same enquiry, do not repeat the prior questionnaire; ask only whether anything has changed. If it is different, ignore the old enquiry and handle this as new."
+        ? " Recent_call_history for this same caller ID from the last 14 days is: " + JSON.stringify(recentCalls) + ". Use this history only after the caller explains why they are calling. If their reason appears to be the same quote or repair enquiry, confirm that it is the same enquiry before reusing the prior details. When a suburb or address is present in the prior summary, include that location in the confirmation question, for example: Is this the same driveway crack repair job in Belmont North? If they confirm it is the same enquiry, do not repeat the prior questionnaire; ask only whether anything has changed. If it is different, ignore the old enquiry and handle this as new."
         : " There is no recent_call_history for this caller ID in the last 14 days.";
       const greetingPrompt = direction === "outbound"
         ? "The call just connected to Tommy. Give him the morning briefing greeting."
         : "The call just connected. The inbound caller ID callback number is " + localCallerNumber + ". Use this number as the default callback number. Do not ask the caller to provide their phone number unless caller ID is unavailable/private/unknown or they want to use a different number. If a callback is needed, read this local-format number back digit by digit, beginning with 0 rather than +61, and ask the caller to confirm it." + recentHistoryInstruction + " Start with your greeting now.";
 `,
   "greeting history context"
+);
+
+source = replaceOnce(
+  source,
+  `      if (msg.type === "response.output_audio_transcript.done") {
+        transcript.push({ role: "assistant", content: msg.transcript });
+      }
+`,
+  `      if (msg.type === "response.output_audio_transcript.done") {
+        transcript.push({ role: "assistant", content: msg.transcript });
+        const spoken = String(msg.transcript || "").toLowerCase();
+        if (/(have a good day|have a great day|thanks for calling|thank you for calling|passed that on to tommy|tommy will get back to you)/.test(spoken)) {
+          closingSpoken = true;
+        }
+      }
+`,
+  "closing transcript detection"
+);
+
+source = replaceOnce(
+  source,
+  `        if (fnName === "hang_up") {
+          console.log("Hang up requested by AI");
+          openAiWs.send(JSON.stringify({
+            type: "conversation.item.create",
+            item: {
+              type: "function_call_output",
+              call_id: msg.call_id,
+              output: "Call ended.",
+            },
+          }));
+          setTimeout(function() {
+            hangUpCall();
+            if (openAiWs) openAiWs.close();
+          }, 1500);
+        }
+`,
+  `        if (fnName === "hang_up") {
+          console.log("Hang up requested by AI");
+          if (!closingSpoken) {
+            console.log("Hang up blocked until closing sentence is spoken");
+            openAiWs.send(JSON.stringify({
+              type: "conversation.item.create",
+              item: {
+                type: "function_call_output",
+                call_id: msg.call_id,
+                output: "Do not hang up yet. First say a natural closing sentence such as: Thanks, I have passed that on to Tommy. Have a good day. After that sentence has been fully spoken, call hang_up again.",
+              },
+            }));
+            openAiWs.send(JSON.stringify({ type: "response.create" }));
+          } else {
+            openAiWs.send(JSON.stringify({
+              type: "conversation.item.create",
+              item: {
+                type: "function_call_output",
+                call_id: msg.call_id,
+                output: "Call ended.",
+              },
+            }));
+            setTimeout(function() {
+              hangUpCall();
+              if (openAiWs) openAiWs.close();
+            }, 3000);
+          }
+        }
+`,
+  "guarded hang up"
 );
 
 source = replaceOnce(
