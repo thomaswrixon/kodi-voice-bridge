@@ -121,6 +121,23 @@ function applySecurityPatches(source, replaceOnce) {
 
   source = replaceOnce(
     source,
+    `      const recentCalls = direction === "inbound" ? await recentCallerHistoryPromise : [];
+      const knownContact = direction === "inbound" ? await callerContactPromise : null;
+      const recentCommunicationContext = direction === "inbound" ? await recentCommunicationPromise : [];
+`,
+    `      const knownContact = direction === "inbound" ? await callerContactPromise : null;
+      const recentCalls = direction === "inbound" && !(knownContact && knownContact.is_owner === true)
+        ? await recentCallerHistoryPromise
+        : [];
+      const recentCommunicationContext = direction === "inbound" && !(knownContact && knownContact.is_owner === true)
+        ? await recentCommunicationPromise
+        : [];
+`,
+    "suppress polluted owner context"
+  );
+
+  source = replaceOnce(
+    source,
     `      const recentCommunicationInstruction = recentCommunicationContext.length`,
     `      const currentSydneyDate = new Intl.DateTimeFormat("en-AU", {
         timeZone: "Australia/Sydney",
@@ -148,11 +165,11 @@ function applySecurityPatches(source, replaceOnce) {
         : Promise.resolve([]);`,
     `      recentCommunicationPromise = direction === "inbound"
         ? callerContactPromise.then(function(contact) {
-            if (contact && contact.contact_conflict === true) return [];
+            if (contact && (contact.contact_conflict === true || contact.is_owner === true)) return [];
             return lookupRecentCommunicationContext(contact);
           }).catch(function() { return []; })
         : Promise.resolve([]);`,
-    "suppress communication context for conflicted identity"
+    "suppress communication context for untrusted or owner identity"
   );
 
   source = replaceOnce(
@@ -161,12 +178,14 @@ function applySecurityPatches(source, replaceOnce) {
             callerText: userTranscriptText(transcript),
             isFriendsFamily: !!(knownContact && knownContact.is_friends_family === true),
           });`,
-    `          const gate = decideTransferEligibility({
-            callerText: userTranscriptText(transcript),
-            isFriendsFamily: !!(knownContact && knownContact.is_friends_family === true),
-            knownContactName: String((knownContact && knownContact.name) || ""),
-          });`,
-    "trusted number identity mismatch gate"
+    `          const gate = knownContact && knownContact.is_owner === true
+            ? { allowed: false, reason: "owner_self_transfer" }
+            : decideTransferEligibility({
+                callerText: userTranscriptText(transcript),
+                isFriendsFamily: !!(knownContact && knownContact.is_friends_family === true),
+                knownContactName: String((knownContact && knownContact.name) || ""),
+              });`,
+    "trusted identity and owner self-transfer gate"
   );
 
   source = replaceOnce(
