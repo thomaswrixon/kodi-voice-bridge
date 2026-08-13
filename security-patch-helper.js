@@ -48,6 +48,7 @@ function applySecurityPatches(source, replaceOnce) {
   let lastSavedReason = "";
   let initialGreetingComplete = false;
   let pendingCallerTurnDuringGreeting = false;
+  let responseActive = false;
 `,
     "startup response state"
   );
@@ -58,10 +59,20 @@ function applySecurityPatches(source, replaceOnce) {
         console.log("OpenAI event: " + msg.type);
       }
 `,
-    `      if (msg.type === "input_audio_buffer.speech_started" || msg.type === "input_audio_buffer.speech_stopped") {
+    `      if (msg.type === "response.created") {
+        responseActive = true;
+      }
+      if (msg.type === "response.done") {
+        responseActive = false;
+      }
+      if (msg.type === "input_audio_buffer.speech_started" || msg.type === "input_audio_buffer.speech_stopped") {
         console.log("OpenAI event: " + msg.type);
         if (msg.type === "input_audio_buffer.speech_stopped" && !initialGreetingComplete) {
           pendingCallerTurnDuringGreeting = true;
+        } else if (msg.type === "input_audio_buffer.speech_stopped" && !responseActive) {
+          responseActive = true;
+          console.log("Creating one response for completed caller turn");
+          openAiWs.send(JSON.stringify({ type: "response.create" }));
         }
       }
 `,
@@ -92,25 +103,10 @@ function applySecurityPatches(source, replaceOnce) {
     `      if (msg.type === "response.function_call_arguments.done") {`,
     `      if (msg.type === "response.done" && !initialGreetingComplete) {
         initialGreetingComplete = true;
-        openAiWs.send(JSON.stringify({
-          type: "session.update",
-          session: {
-            audio: {
-              input: {
-                turn_detection: {
-                  type: "server_vad",
-                  threshold: 0.5,
-                  prefix_padding_ms: 300,
-                  silence_duration_ms: 700,
-                  create_response: true,
-                  interrupt_response: true,
-                },
-              },
-            },
-          },
-        }));
         if (pendingCallerTurnDuringGreeting) {
           pendingCallerTurnDuringGreeting = false;
+          responseActive = true;
+          console.log("Creating deferred response for caller turn during greeting");
           openAiWs.send(JSON.stringify({ type: "response.create" }));
         }
       }
