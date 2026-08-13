@@ -161,31 +161,18 @@ source = replaceOnce(
 `,
   `        if (fnName === "hang_up") {
           console.log("Hang up requested by AI");
-          if (!closingSpoken) {
-            console.log("Hang up blocked until closing sentence is spoken");
-            openAiWs.send(JSON.stringify({
-              type: "conversation.item.create",
-              item: {
-                type: "function_call_output",
-                call_id: msg.call_id,
-                output: "Do not hang up yet. First say a natural closing sentence such as: Thanks, I have passed that on to Tommy. Have a good day. After that sentence has been fully spoken, call hang_up again.",
-              },
-            }));
-            openAiWs.send(JSON.stringify({ type: "response.create" }));
-          } else {
-            openAiWs.send(JSON.stringify({
-              type: "conversation.item.create",
-              item: {
-                type: "function_call_output",
-                call_id: msg.call_id,
-                output: "Call ended.",
-              },
-            }));
-            setTimeout(function() {
-              hangUpCall();
-              if (openAiWs) openAiWs.close();
-            }, 3000);
-          }
+          openAiWs.send(JSON.stringify({
+            type: "conversation.item.create",
+            item: {
+              type: "function_call_output",
+              call_id: msg.call_id,
+              output: "Call ended.",
+            },
+          }));
+          setTimeout(function() {
+            hangUpCall();
+            if (openAiWs) openAiWs.close();
+          }, 1500);
         }
 `,
   "guarded hang up"
