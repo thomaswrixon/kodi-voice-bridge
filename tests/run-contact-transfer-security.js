@@ -1,5 +1,6 @@
 const { decideTransferEligibility } = require('../transfer-eligibility');
 const { resolveCallerContactMatch } = require('../contact-match-policy');
+const { createTransferAttemptCooldown } = require('../transfer-attempt-cooldown');
 
 const checks = [];
 function check(label, ok, detail) {
@@ -50,6 +51,17 @@ const recycledNumber = resolveCallerContactMatch([
 ]);
 check('Conflicting names on same number fail closed', recycledNumber && recycledNumber.is_friends_family === false && recycledNumber.contact_conflict === true, recycledNumber);
 
+let fakeNow = 1_000_000;
+const cooldown = createTransferAttemptCooldown({ cooldownMs: 5 * 60 * 1000, now: () => fakeNow });
+const firstAttempt = cooldown.check('0412345678');
+cooldown.record('0412345678');
+const immediateRedial = cooldown.check('0412345678');
+check('First eligible caller attempt is allowed', firstAttempt.allowed === true, firstAttempt);
+check('Immediate redial cannot ring Tommy again', immediateRedial.allowed === false && immediateRedial.reason === 'caller_transfer_cooldown', immediateRedial);
+fakeNow += 5 * 60 * 1000 + 1;
+const afterCooldown = cooldown.check('0412345678');
+check('Caller can be attempted again after cooldown expires', afterCooldown.allowed === true, afterCooldown);
+
 const passed = checks.filter((x) => x.pass).length;
-console.log('CONTACT_TRANSFER_SECURITY_SUMMARY ' + JSON.stringify({ version:'v2', completed: checks.length, passed, failed: checks.length - passed }));
+console.log('CONTACT_TRANSFER_SECURITY_SUMMARY ' + JSON.stringify({ version:'v3', completed: checks.length, passed, failed: checks.length - passed }));
 if (passed !== checks.length) process.exitCode = 1;
