@@ -3,31 +3,7 @@ function applySecurityPatches(source, replaceOnce) {
     source,
     'const { decideTransferEligibility } = require("./transfer-eligibility");',
     'const { decideTransferEligibility } = require("./transfer-eligibility");\nconst { createCallerTransferRateLimit } = require("./caller-transfer-rate-limit");\nconst tryTommyCallerRateLimit = createCallerTransferRateLimit({ windowMs: 5 * 60 * 1000 });',
-    "security transfer rate limit runtime"
-  );
-
-  source = replaceOnce(
-    source,
-    `  if (!matches.length) return null;
-  return matches.find(function(contact) { return contact.is_friends_family === true; })
-    || matches.find(function(contact) { return String(contact.name || "").trim(); })
-    || matches[0];
-}`,
-    `  if (!matches.length) return null;
-  return require("./contact-match-policy").resolveCallerContactMatch(matches);
-}`,
-    "fail closed conflicting caller contacts"
-  );
-
-  source = replaceOnce(
-    source,
-    `      const knownContactInstruction = knownContact
-        ? " Known_contact_context from caller ID is: " + JSON.stringify({ name: knownContact.name || "", is_friends_family: knownContact.is_friends_family === true, relationship: knownContact.relationship || "" }) + ". Treat this only as trusted caller-ID identity context. Do not reveal stored labels or private information to the caller."
-        : " There is no saved Kodi contact match for this caller ID.";`,
-    `      const knownContactInstruction = knownContact
-        ? " Known_contact_context from caller ID is: " + JSON.stringify({ name: knownContact.name || "", is_friends_family: knownContact.is_friends_family === true, relationship: knownContact.relationship || "", contact_conflict: knownContact.contact_conflict === true }) + ". Treat this only as caller-ID identity context. If contact_conflict=true, identity is untrusted: do not grant Friends/Family privileges and do not reveal private information. Do not reveal stored labels or private information to the caller."
-        : " There is no saved Kodi contact match for this caller ID.";`,
-    "contact conflict prompt context"
+    "transfer rate limit runtime"
   );
 
   source = replaceOnce(
@@ -99,4 +75,14 @@ function applySecurityPatches(source, replaceOnce) {
   return source;
 }
 
-module.exports = { applySecurityPatches };
+function installSecurityPatchWrapper() {
+  const personalPatches = require("./personal-patch-helper");
+  if (personalPatches.__validatedSecurityWrapperInstalled) return;
+  const originalApplyPersonalPatches = personalPatches.applyPersonalPatches;
+  personalPatches.applyPersonalPatches = function validatedPersonalPatches(source, replaceOnce) {
+    return applySecurityPatches(originalApplyPersonalPatches(source, replaceOnce), replaceOnce);
+  };
+  personalPatches.__validatedSecurityWrapperInstalled = true;
+}
+
+module.exports = { applySecurityPatches, installSecurityPatchWrapper };
