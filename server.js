@@ -459,7 +459,7 @@ wss.on("connection", (twilioWs) => {
             {
               type: "function",
               name: "save_caller_info",
-              description: "MANDATORY: Save caller name, reason, and callback number. You MUST call this on every inbound call before hang_up. Use the inbound caller ID as the default callback number when available, confirm it by reading it back digit by digit, and only ask for a different number if caller ID is unavailable or the caller requests another number.",
+              description: "MANDATORY: After you have already spoken the final goodbye, save caller name, reason, and callback number, then call hang_up silently. Do not speak after this tool returns. Use inbound caller ID by default; confirm it digit by digit only when a callback is required.",
               parameters: {
                 type: "object",
                 properties: {
@@ -581,48 +581,51 @@ wss.on("connection", (twilioWs) => {
         }
 
         if (fnName === "save_caller_info") {
-          try {
-            try {
-              const saveRes = await fetch(BASE44_API_BASE, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "api_key": BASE44_API_KEY },
-                body: JSON.stringify({
-                  call_sid: callSid || "",
-                  caller_number: callerNumber || "unknown",
-                  from_name: fnArgs.name || "",
-                  message: (fnArgs.reason || "") + (fnArgs.notes ? " - " + fnArgs.notes : ""),
-                  channel: "call",
-                  status: "completed",
-                  history: JSON.stringify(transcript),
-                  briefed: false,
-                }),
-              });
-              const saveJson = await saveRes.json();
-              console.log("Save response status: " + saveRes.status);
-              console.log("Save response body: " + JSON.stringify(saveJson));
-              console.log("API key present: " + (BASE44_API_KEY ? "yes len=" + BASE44_API_KEY.length : "NO - MISSING"));
-              if (saveJson.id) {
-                console.log("Caller info saved for " + (fnArgs.name || "unknown") + " id=" + saveJson.id);
-                savedByTool = true;
-              } else {
-                console.error("Save failed - no id returned:", JSON.stringify(saveJson));
-              }
-            } catch (saveErr) {
-              console.error("Direct API save error:", saveErr);
-            }
-          } catch (err) {
-            console.error("Save error:", err);
-          }
+          const savePayload = {
+            call_sid: callSid || "",
+            caller_number: callerNumber || "unknown",
+            from_name: fnArgs.name || "",
+            message: (fnArgs.reason || "") + (fnArgs.notes ? " - " + fnArgs.notes : ""),
+            channel: "call",
+            status: "completed",
+            history: JSON.stringify(transcript),
+            briefed: false,
+          };
 
+          // Acknowledge the tool immediately so closing speech is never blocked by Base44 latency.
+          // The write continues in the background; failures are logged and retried once.
+          savedByTool = true;
           openAiWs.send(JSON.stringify({
             type: "conversation.item.create",
             item: {
               type: "function_call_output",
               call_id: msg.call_id,
-              output: "Saved successfully.",
+              output: "Save queued. Call hang_up now without speaking.",
             },
           }));
           openAiWs.send(JSON.stringify({ type: "response.create" }));
+
+          (async function saveCallerInBackground() {
+            for (let attempt = 1; attempt <= 2; attempt++) {
+              try {
+                const saveRes = await fetch(BASE44_API_BASE, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", "api_key": BASE44_API_KEY },
+                  body: JSON.stringify(savePayload),
+                });
+                const saveJson = await saveRes.json();
+                console.log("Save response status: " + saveRes.status);
+                if (saveJson.id) {
+                  console.log("Caller info saved for " + (fnArgs.name || "unknown") + " id=" + saveJson.id);
+                  return;
+                }
+                throw new Error("No id returned: " + JSON.stringify(saveJson).slice(0, 300));
+              } catch (saveErr) {
+                console.error("Background save attempt " + attempt + " failed:", saveErr);
+              }
+            }
+            console.error("Caller info background save failed after retry for call " + (callSid || "unknown"));
+          })();
         }
 
         if (fnName === "hang_up") {
