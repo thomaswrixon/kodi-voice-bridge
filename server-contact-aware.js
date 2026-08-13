@@ -1,5 +1,10 @@
 const fs = require("fs");
 const path = require("path");
+const promptModule = require("./kodi-prompt");
+const { PERSONAL_CALL_OVERRIDES } = require("./personal-call-overrides");
+const { PERSONAL_CALL_HARD_STOPS } = require("./personal-call-hard-stops");
+
+promptModule.KODI_SYSTEM_PROMPT += PERSONAL_CALL_OVERRIDES + PERSONAL_CALL_HARD_STOPS;
 
 const originalReadFileSync = fs.readFileSync;
 
@@ -16,7 +21,7 @@ fs.readFileSync = function patchedReadFileSync(filename, ...args) {
     throw new Error("Contact-aware wrapper could not find repeat-aware compile marker");
   }
 
-  const injection = `source = require("./contact-patch-helper").applyContactPatches(source, replaceOnce);\n\n`;
+  const injection = `source = require("./contact-patch-helper").applyContactPatches(source, replaceOnce);\nsource = require("./personal-patch-helper").applyPersonalPatches(source, replaceOnce);\n\n`;
   return result.replace(marker, injection + marker);
 };
 
