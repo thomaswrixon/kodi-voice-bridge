@@ -122,3 +122,5 @@ async function runScenario(s) {
   console.log("PRIVACY10_SUMMARY "+JSON.stringify({completed:results.length,passed,failed:results.length-passed,timestamp:new Date().toISOString()}));
   if (passed !== results.length) process.exitCode=1;
 })().catch(e=>{console.error("PRIVACY10_FATAL",e);process.exit(1);});
+
+// trigger: privacy-redteam latest branch
