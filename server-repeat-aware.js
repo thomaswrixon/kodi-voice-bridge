@@ -1,26 +1,11 @@
 require("./supplier-guidance-preload");
-const { QUOTE_FLOW_OVERRIDES } = require("./quote-flow-overrides");
-
 const fs = require("fs");
 const path = require("path");
 const Module = require("module");
 
 const promptModule = require("./kodi-prompt");
-promptModule.KODI_SYSTEM_PROMPT += `
-
-REPEAT CALLER / QUOTE FOLLOW-UP RULES:
-- The phone system may provide recent_call_history for the same inbound caller ID from the previous 14 days.
-- Use recent_call_history only to avoid making a caller repeat information they already gave LCM. Never assume two calls are about the same enquiry solely because the phone number matches.
-- After the caller gives their name and reason, if the recent history clearly contains a matching quote, crack repair, concrete repair, driveway, slab, or other quote enquiry, ask one short confirmation question that includes the work type and the previous suburb/address when available, for example: "Is this the same driveway crack repair job in Belmont North?"
-- If they confirm it is the same enquiry, do NOT repeat the previous quote questionnaire or re-collect details already present in the recent history. Ask only: "Has anything changed since you last called?"
-- If nothing has changed, acknowledge the follow-up and save it as a repeat follow-up. In save_caller_info use reason "Repeat follow-up on existing quote enquiry" and include the related_call_log_id from the matching recent history in notes, plus whether anything changed.
-- If something has changed, collect only the changed or missing information, then save the follow-up linked to the previous call log ID.
-- If it is a different request, treat it as a new enquiry and do not reuse unrelated previous-call details.
-- If more than one recent enquiry could match, briefly ask which one they mean rather than guessing.
-- Never read unrelated previous-call details back to the caller.
-- After save_caller_info succeeds, always speak a natural closing sentence before calling hang_up. Never end the call immediately after the caller confirms their callback number.
-`;
-promptModule.KODI_SYSTEM_PROMPT += QUOTE_FLOW_OVERRIDES;
+const { KODI_CONVERSATIONAL_PROMPT } = require("./kodi-conversational-prompt");
+promptModule.KODI_SYSTEM_PROMPT = KODI_CONVERSATIONAL_PROMPT;
 
 function replaceOnce(source, oldText, newText, label) {
   const first = source.indexOf(oldText);
