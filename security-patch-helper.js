@@ -244,6 +244,50 @@ function applySecurityPatches(source, replaceOnce) {
     "clear rate limit when transfer could not start"
   );
 
+  source = replaceOnce(
+    source,
+    `      for (const payload of audioBuffer) {
+        openAiWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: payload }));
+      }
+      audioBuffer = [];
+`,
+    `      // The greeting is a closed introduction. Discard anything heard before it
+      // finishes so background voices are not transcribed or stored.
+      audioBuffer = [];
+      console.log("Discarded pre-greeting inbound audio");
+`,
+    "discard pre-greeting buffered audio"
+  );
+
+  source = replaceOnce(
+    source,
+    `    if (msg.event === "media") {
+      const payload = msg.media.payload;
+      console.log("Twilio inbound media: payloadLength=" + (payload ? payload.length : 0));
+      if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
+        openAiWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: payload }));
+      } else {
+        audioBuffer.push(payload);
+      }
+    }
+`,
+    `    if (msg.event === "media") {
+      const payload = msg.media.payload;
+      if (!initialGreetingComplete) {
+        // Do not listen, transcribe, interrupt, or log voices before Kodi's intro ends.
+        return;
+      }
+      console.log("Twilio inbound media: payloadLength=" + (payload ? payload.length : 0));
+      if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
+        openAiWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: payload }));
+      } else {
+        audioBuffer.push(payload);
+      }
+    }
+`,
+    "open microphone after greeting"
+  );
+
   return source;
 }
 
