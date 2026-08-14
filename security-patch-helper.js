@@ -69,7 +69,7 @@ function applySecurityPatches(source, replaceOnce) {
         console.log("OpenAI event: " + msg.type);
         if (msg.type === "input_audio_buffer.speech_started") {
           if (streamSid) {
-            ws.send(JSON.stringify({ event: "clear", streamSid: streamSid }));
+            twilioWs.send(JSON.stringify({ event: "clear", streamSid: streamSid }));
             console.log("Cleared queued Kodi audio so caller has the floor");
           }
           if (responseActive) {
