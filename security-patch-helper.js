@@ -29,12 +29,14 @@ function applySecurityPatches(source, replaceOnce) {
                 silence_duration_ms: 700,
               },`,
     `              turn_detection: {
-                type: "semantic_vad",
-                eagerness: "low",
-                create_response: false,
-                interrupt_response: false,
+                type: "server_vad",
+                threshold: 0.5,
+                prefix_padding_ms: 300,
+                silence_duration_ms: 500,
+                create_response: true,
+                interrupt_response: true,
               },`,
-    "single startup response gate"
+    "native automatic turn taking"
   );
 
   source = replaceOnce(
@@ -44,12 +46,7 @@ function applySecurityPatches(source, replaceOnce) {
 `,
     `  let lastSavedCallerName = "";
   let lastSavedReason = "";
-  let initialGreetingComplete = false;
-  let responseActive = false;
-  let responseHadAudio = false;
-  let assistantPlaybackPending = false;
-  let playbackMarkSequence = 0;
-  let pendingPlaybackMarkName = "";
+  let initialGreetingStarted = false;
 `,
     "startup response state"
   );
@@ -60,24 +57,17 @@ function applySecurityPatches(source, replaceOnce) {
         console.log("OpenAI event: " + msg.type);
       }
 `,
-    `      if (msg.type === "response.created") {
-        responseActive = true;
-        responseHadAudio = false;
-      }
-      if (msg.type === "response.output_audio.delta" || msg.type === "response.audio.delta") {
-        responseHadAudio = true;
-        assistantPlaybackPending = true;
+    `      if (msg.type === "response.output_audio.delta" || msg.type === "response.audio.delta") {
+        if (!initialGreetingStarted) {
+          initialGreetingStarted = true;
+          console.log("Kodi greeting started; microphone open for natural interruption");
+        }
       }
       if (msg.type === "input_audio_buffer.speech_started" || msg.type === "input_audio_buffer.speech_stopped") {
         console.log("OpenAI event: " + msg.type);
-        if (msg.type === "input_audio_buffer.speech_stopped" && !responseActive && !assistantPlaybackPending) {
-          responseActive = true;
-          console.log("Creating one response for completed caller turn");
-          openAiWs.send(JSON.stringify({ type: "response.create" }));
-        }
       }
 `,
-    "remember caller turn during greeting"
+    "open natural conversation when greeting starts"
   );
 
   source = replaceOnce(
@@ -97,30 +87,6 @@ function applySecurityPatches(source, replaceOnce) {
       }
 `,
     "filter transcription guidance leakage"
-  );
-
-  source = replaceOnce(
-    source,
-    `      if (msg.type === "response.function_call_arguments.done") {`,
-    `      if (msg.type === "response.done") {
-        responseActive = false;
-        if (responseHadAudio && streamSid) {
-          playbackMarkSequence += 1;
-          pendingPlaybackMarkName = "kodi_playback_" + playbackMarkSequence;
-          assistantPlaybackPending = true;
-          twilioWs.send(JSON.stringify({
-            event: "mark",
-            streamSid: streamSid,
-            mark: { name: pendingPlaybackMarkName },
-          }));
-          console.log("Waiting for Twilio playback mark: " + pendingPlaybackMarkName);
-        } else {
-          responseHadAudio = false;
-        }
-      }
-
-      if (msg.type === "response.function_call_arguments.done") {`,
-    "enable normal responses after greeting"
   );
 
   source = replaceOnce(
@@ -289,22 +255,10 @@ function applySecurityPatches(source, replaceOnce) {
       }
     }
 `,
-    `    if (msg.event === "mark") {
-      const markName = String((msg.mark && msg.mark.name) || "");
-      if (markName && markName === pendingPlaybackMarkName) {
-        assistantPlaybackPending = false;
-        responseHadAudio = false;
-        pendingPlaybackMarkName = "";
-        if (!initialGreetingComplete) initialGreetingComplete = true;
-        console.log("Kodi playback finished; microphone open");
-      }
-      return;
-    }
-
-    if (msg.event === "media") {
+    `    if (msg.event === "media") {
       const payload = msg.media.payload;
-      if (!initialGreetingComplete || responseActive || assistantPlaybackPending) {
-        // Strict half-duplex: never send Kodi's own loudspeaker audio back to OpenAI.
+      if (!initialGreetingStarted) {
+        // Do not listen to, transcribe, or store voices before Kodi begins the introduction.
         return;
       }
       if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
@@ -314,7 +268,7 @@ function applySecurityPatches(source, replaceOnce) {
       }
     }
 `,
-    "open microphone after greeting"
+    "startup-only microphone gate"
   );
 
   source = replaceOnce(
