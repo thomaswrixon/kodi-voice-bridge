@@ -82,7 +82,7 @@ async function lookupJobSchedule(args) {
   if (address) query.address = address;
   if (suburb) query.suburb = suburb;
 
-  if (!address && searchTerm) {
+  if (!address && searchTerm && !builderJobNumber) {
     if (/\d/.test(searchTerm)) {
       const commaIndex = searchTerm.lastIndexOf(",");
       if (commaIndex >= 0) {
