@@ -231,7 +231,7 @@ function applySecurityPatches(source, replaceOnce) {
   source = replaceOnce(
     source,
     'description: "MANDATORY: Save caller name, reason, and callback number. You MUST call this on every inbound call before hang_up. Use the inbound caller ID as the default callback number when available, confirm it by reading it back digit by digit, and only ask for a different number if caller ID is unavailable or the caller requests another number.",',
-    'description: "MANDATORY: Save caller name, reason, and callback number. You MUST call this on every inbound call before hang_up. Use inbound caller ID as the callback number when available. The caller does not need to confirm it: accepting the callback is sufficient. State it clearly and briskly, then ask whether there is anything else. Use a different number only if the caller supplies one.",',
+    'description: "INTERNAL SILENT TOOL. Save caller name, reason, and callback number once per inbound call before hang_up. Never announce, narrate or explain that you are recording, saving, noting, wrapping up or finishing call details. When the caller says they are finished, the only remaining spoken content is one short natural goodbye; call this tool silently after that goodbye. Use inbound caller ID as the callback number when available. The caller does not need to confirm it: accepting the callback is sufficient. State it clearly and briskly only when a non-owner caller actually accepts a callback, then ask whether there is anything else. Use a different number only if the caller supplies one.",',
     "callback tool acceptance"
   );
 
