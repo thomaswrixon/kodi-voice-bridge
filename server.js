@@ -117,7 +117,52 @@ async function lookupJobSchedule(args) {
     return Array.isArray(body.jobs) ? body.jobs : [];
   }
 
+  console.log("LCM lookup request:", JSON.stringify({
+    search_term: searchTerm,
+    address: address,
+    suburb: suburb,
+    builder_job_number: builderJobNumber,
+    initial_query: query,
+  }));
+
   let jobs = await runJobSearch(query);
+
+  // Speech transcription and builder records often differ only in street suffixes
+  // or whether a compound street name contains a space. Retry a small, bounded
+  // set of address variants before telling the caller that no job exists.
+  if (!jobs.length && query.address) {
+    const originalAddress = String(query.address).trim();
+    const addressVariants = [];
+    const addAddressVariant = function(value) {
+      const candidate = String(value || "").replace(/\s+/g, " ").trim();
+      if (candidate && normaliseSearch(candidate) !== normaliseSearch(originalAddress) &&
+          !addressVariants.some(function(existing) { return normaliseSearch(existing) === normaliseSearch(candidate); })) {
+        addressVariants.push(candidate);
+      }
+    };
+
+    addAddressVariant(originalAddress.replace(/\bAvenue\b/i, "Ave"));
+    addAddressVariant(originalAddress.replace(/\bAve\b/i, "Avenue"));
+    addAddressVariant(originalAddress.replace(/\bStreet\b/i, "St"));
+    addAddressVariant(originalAddress.replace(/\bSt\b/i, "Street"));
+    addAddressVariant(originalAddress.replace(/\bRoad\b/i, "Rd"));
+    addAddressVariant(originalAddress.replace(/\bRd\b/i, "Road"));
+    addAddressVariant(originalAddress.replace(/([A-Za-z]{3,})(grass)\b/i, "$1 $2"));
+
+    for (const variant of addressVariants) {
+      jobs = await runJobSearch(Object.assign({}, query, { address: variant }));
+      if (jobs.length) {
+        console.log("LCM address fallback matched:", variant);
+        break;
+      }
+    }
+
+    if (!jobs.length && query.suburb) {
+      jobs = await runJobSearch({ address: originalAddress, limit: 20 });
+      if (jobs.length) console.log("LCM address fallback matched without suburb");
+    }
+  }
+
   if (!jobs.length && builderJobNumber) {
     const compactBuilderNumber = builderJobNumber.replace(/[^A-Za-z0-9]/g, "");
     if (compactBuilderNumber && compactBuilderNumber !== builderJobNumber) {
