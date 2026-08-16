@@ -241,6 +241,29 @@ async function lookupJobSchedule(args) {
     }
   }
 
+  const technicalSpecs = {};
+  const technicalFieldNames = [
+    "concrete_mix",
+    "slab_mix",
+    "slab_mpa",
+    "slab_concrete_mpa",
+    "concrete_strength",
+    "garage_mix",
+    "garage_mpa",
+  ];
+  technicalFieldNames.forEach(function(fieldName) {
+    const value = job[fieldName];
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      technicalSpecs[fieldName] = value;
+    }
+  });
+  if (job.technical_specs && typeof job.technical_specs === "object") {
+    technicalSpecs.technical_specs = job.technical_specs;
+  }
+  console.log("LCM matched job technical fields:", JSON.stringify(
+    Object.keys(job).filter(function(key) { return /concrete|mix|mpa|strength|slab|garage/i.test(key); })
+  ));
+
   return {
     status: "single_match",
     job: {
@@ -248,6 +271,7 @@ async function lookupJobSchedule(args) {
       address: [job.address, job.suburb].filter(Boolean).join(", "),
     },
     activities: activities,
+    technical_specs: Object.keys(technicalSpecs).length ? technicalSpecs : null,
     supplier_guidance: supplierGuidance,
     message: activities.length
       ? "Confirmed activity dates found. Any supplier_guidance is mandatory."
