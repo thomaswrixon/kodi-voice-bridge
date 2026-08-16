@@ -171,7 +171,12 @@ source = replaceOnce(
                 output: "BLOCKED: The caller has not heard a closing yet. Speak one short natural goodbye now, then call hang_up again silently.",
               },
             }));
-            openAiWs.send(JSON.stringify({ type: "response.create" }));
+            openAiWs.send(JSON.stringify({
+              type: "response.create",
+              response: {
+                instructions: "Say exactly: Goodbye. Do not say anything before or after it. Then call hang_up again.",
+              },
+            }));
           } else {
             openAiWs.send(JSON.stringify({
               type: "conversation.item.create",
