@@ -45,8 +45,11 @@ function applySecurityPatches(source, replaceOnce) {
     `  let lastSavedCallerName = "";
   let lastSavedReason = "";
   let initialGreetingComplete = false;
-  let pendingCallerTurnDuringGreeting = false;
   let responseActive = false;
+  let responseHadAudio = false;
+  let assistantPlaybackPending = false;
+  let playbackMarkSequence = 0;
+  let pendingPlaybackMarkName = "";
 `,
     "startup response state"
   );
@@ -59,31 +62,18 @@ function applySecurityPatches(source, replaceOnce) {
 `,
     `      if (msg.type === "response.created") {
         responseActive = true;
+        responseHadAudio = false;
       }
-      if (msg.type === "response.done") {
-        responseActive = false;
+      if (msg.type === "response.output_audio.delta" || msg.type === "response.audio.delta") {
+        responseHadAudio = true;
+        assistantPlaybackPending = true;
       }
       if (msg.type === "input_audio_buffer.speech_started" || msg.type === "input_audio_buffer.speech_stopped") {
         console.log("OpenAI event: " + msg.type);
-        if (msg.type === "input_audio_buffer.speech_started") {
-          if (streamSid) {
-            twilioWs.send(JSON.stringify({ event: "clear", streamSid: streamSid }));
-            console.log("Cleared queued Kodi audio so caller has the floor");
-          }
-          if (responseActive) {
-            pendingCallerTurnDuringGreeting = true;
-            openAiWs.send(JSON.stringify({ type: "response.cancel" }));
-            console.log("Cancelled active Kodi response for caller interruption");
-          }
-        }
-        if (msg.type === "input_audio_buffer.speech_stopped") {
-          if (responseActive) {
-            pendingCallerTurnDuringGreeting = true;
-          } else {
-            responseActive = true;
-            console.log("Creating one response for completed caller turn");
-            openAiWs.send(JSON.stringify({ type: "response.create" }));
-          }
+        if (msg.type === "input_audio_buffer.speech_stopped" && !responseActive && !assistantPlaybackPending) {
+          responseActive = true;
+          console.log("Creating one response for completed caller turn");
+          openAiWs.send(JSON.stringify({ type: "response.create" }));
         }
       }
 `,
@@ -113,12 +103,19 @@ function applySecurityPatches(source, replaceOnce) {
     source,
     `      if (msg.type === "response.function_call_arguments.done") {`,
     `      if (msg.type === "response.done") {
-        if (!initialGreetingComplete) initialGreetingComplete = true;
-        if (pendingCallerTurnDuringGreeting) {
-          pendingCallerTurnDuringGreeting = false;
-          responseActive = true;
-          console.log("Creating deferred response for interrupted caller turn");
-          openAiWs.send(JSON.stringify({ type: "response.create" }));
+        responseActive = false;
+        if (responseHadAudio && streamSid) {
+          playbackMarkSequence += 1;
+          pendingPlaybackMarkName = "kodi_playback_" + playbackMarkSequence;
+          assistantPlaybackPending = true;
+          twilioWs.send(JSON.stringify({
+            event: "mark",
+            streamSid: streamSid,
+            mark: { name: pendingPlaybackMarkName },
+          }));
+          console.log("Waiting for Twilio playback mark: " + pendingPlaybackMarkName);
+        } else {
+          responseHadAudio = false;
         }
       }
 
@@ -136,7 +133,7 @@ function applySecurityPatches(source, replaceOnce) {
         return Promise.race([
           promise,
           new Promise(function(resolve) {
-            setTimeout(function() { resolve(fallback); }, 800);
+            setTimeout(function() { resolve(fallback); }, 2000);
           }),
         ]);
       };
@@ -271,10 +268,22 @@ function applySecurityPatches(source, replaceOnce) {
       }
     }
 `,
-    `    if (msg.event === "media") {
+    `    if (msg.event === "mark") {
+      const markName = String((msg.mark && msg.mark.name) || "");
+      if (markName && markName === pendingPlaybackMarkName) {
+        assistantPlaybackPending = false;
+        responseHadAudio = false;
+        pendingPlaybackMarkName = "";
+        if (!initialGreetingComplete) initialGreetingComplete = true;
+        console.log("Kodi playback finished; microphone open");
+      }
+      return;
+    }
+
+    if (msg.event === "media") {
       const payload = msg.media.payload;
-      if (!initialGreetingComplete) {
-        // Do not listen, transcribe, interrupt, or log voices before Kodi's intro ends.
+      if (!initialGreetingComplete || responseActive || assistantPlaybackPending) {
+        // Strict half-duplex: never send Kodi's own loudspeaker audio back to OpenAI.
         return;
       }
       console.log("Twilio inbound media: payloadLength=" + (payload ? payload.length : 0));
