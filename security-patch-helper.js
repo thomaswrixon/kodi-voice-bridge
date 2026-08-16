@@ -281,7 +281,6 @@ function applySecurityPatches(source, replaceOnce) {
     source,
     `    if (msg.event === "media") {
       const payload = msg.media.payload;
-      console.log("Twilio inbound media: payloadLength=" + (payload ? payload.length : 0));
       if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
         openAiWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: payload }));
       } else {
@@ -316,6 +315,22 @@ function applySecurityPatches(source, replaceOnce) {
     }
 `,
     "open microphone after greeting"
+  );
+
+  source = replaceOnce(
+    source,
+    `        console.log("OpenAI event: response.output_audio.delta");
+        console.log("Response audio base64 length: " + msg.delta.length + " bytes");
+        try {
+          const decodedPrefix = Buffer.from(msg.delta, "base64").slice(0, 6).toString("hex");
+          console.log("Decoded audio prefix (hex): " + decodedPrefix);
+        } catch (hexErr) {
+          console.error("Failed to decode audio prefix:", hexErr.message);
+        }
+        console.log("Twilio media event: event=media streamSid=" + streamSid + " payloadLength=" + msg.delta.length);
+`,
+    "",
+    "remove per-packet outbound audio logging"
   );
 
   return source;
