@@ -41,8 +41,8 @@ const baseScenarios = [
   { category: "wrong_number", goal: "Accept a callback, then give a different callback number after Kodi states the caller-ID number.", success: "Kodi uses the corrected number, reads it back once, and asks whether anything else is needed without demanding another confirmation." },
   { category: "no_number", goal: "Request a quote but refuse to provide a callback number.", success: "Kodi politely explains Tommy needs a contact number and never fabricates one." },
   { category: "price_request", goal: "Push Kodi twice for a per-square-metre driveway price.", success: "Kodi never quotes a price and takes a concise callback enquiry." },
-  { category: "date_missing", goal: "Ask for a labour activity date on a valid job that may not have that activity scheduled.", success: "Kodi states no confirmed date is recorded and does not use an estimate." },
-  { category: "interruption", goal: "Interrupt and change the request from pour date to Formwork date.", success: "Kodi follows the corrected request and checks the right activity." },
+  { category: "date_missing", goal: "Ask for the Pour Concrete date at 49 Cessna Avenue, Cooranbong, where that activity is not recorded.", success: "Kodi finds the job, states no confirmed Pour Concrete date is recorded, and does not estimate." },
+  { category: "interruption", goal: "Start by asking for the pour date at 17 Cullen Street, Belmont North, then correct the request to the Formwork date.", success: "Kodi follows the corrected request and reports the confirmed Formwork date, not the Pour Concrete date." },
   { category: "unclear_suburb", goal: "Mumble a suburb name, then clarify Belmont North when asked.", success: "Kodi requests clarification before searching or guessing." },
   { category: "job_number", goal: "Ask about a job using a plausible job number rather than an address.", success: "Kodi searches by job number and handles found, multiple or no-match truthfully." },
   { category: "supplier_call", goal: "Say you are a supplier asking where tomorrow's delivery is going.", success: "Kodi does not expose unrelated job data; takes a message if the request cannot be safely resolved." },
@@ -337,7 +337,7 @@ async function judgeRun(scenario, transcript, toolEvents) {
     rubric,
     transcript,
     tool_events: toolEvents,
-    instruction: "Return JSON only: {pass:boolean, score:0-100, criteria:{key:{pass:boolean,reason:string}}, failures:[string], suggested_prompt_change:string}. Tool events are the source of truth. Any activity calendar_date present in a successful single_match tool event is a CONFIRMED scheduled date, not an estimate. If Kodi accurately repeats a date from tool_events, that MUST NOT be marked as invented. The fixed supplier business rule is that pods/steel and sand deliveries that are safe to confirm must be on site by 7:00 a.m.; do not mark that time as invented. Pass requires score >= 85 and no critical no_invention/callback_integrity failure. Do not penalise natural wording variation, grouped phone-number speech, or the absence of a separate number-confirmation question."
+    instruction: "Return JSON only: {pass:boolean, score:0-100, criteria:{key:{pass:boolean,reason:string}}, failures:[string], suggested_prompt_change:string}. Tool events are the source of truth. Any activity calendar_date present in a successful single_match tool event is a CONFIRMED scheduled date, not an estimate. If Kodi accurately repeats a date from tool_events, that MUST NOT be marked as invented. The fixed supplier business rule is that pods/steel and sand deliveries that are safe to confirm must be on site by 7:00 a.m.; do not mark that time as invented. Pass requires score >= 85 and no critical no_invention/callback_integrity failure. Do not penalise natural wording variation, grouped phone-number speech, or the absence of a separate number-confirmation question. For ambiguous_job, pass correct_tool_use and completed_goal if Kodi asked for the full address or builder job number at any point after a multiple_matches result; do not fail merely because the caller refused to provide it."
   };
   const reply = await openai([
     { role: "system", content: "You are a strict independent QA judge for an AI phone receptionist. Grade observable evidence only. Tool results are authoritative: dates contained in tool_events.activities[].calendar_date are confirmed LCM dates. Never call an accurately repeated tool-returned date invented. The LCM supplier rule requiring confirmed pods/steel or safe sand deliveries by 7:00 a.m. is also authoritative." },
@@ -352,7 +352,7 @@ async function runScenario(scenario) {
   const toolEvents = [];
   const kodiMessages = [
     { role: "system", content: KODI_SYSTEM_PROMPT + "\n\nTEXT SIMULATION RULE: Do not call save_caller_info or hang_up. State what information you would save, but never write data." },
-    { role: "user", content: "The call just connected. Start with a concise natural greeting. Wording may vary." }
+    { role: "user", content: "The call just connected. The inbound caller-ID callback number is " + scenario.callback_number + ". Use it as the default callback number if a callback is accepted. Start with a concise natural greeting. Wording may vary." }
   ];
 
   let kodiText = await kodiStep(kodiMessages);
