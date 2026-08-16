@@ -133,7 +133,7 @@ source = replaceOnce(
   `      if (msg.type === "response.output_audio_transcript.done") {
         transcript.push({ role: "assistant", content: msg.transcript });
         const spoken = String(msg.transcript || "").toLowerCase();
-        if (/(have a good day|have a great day|thanks for calling|thank you for calling|passed that on to tommy|tommy will get back to you)/.test(spoken)) {
+        if (/(have a good day|have a great day|thanks for calling|thank you for calling|passed that on to tommy|tommy will get back to you|goodbye|see ya|take care|bye(?:\s|[.!]|$))/.test(spoken)) {
           closingSpoken = true;
         }
       }
