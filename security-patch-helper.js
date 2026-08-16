@@ -29,14 +29,12 @@ function applySecurityPatches(source, replaceOnce) {
                 silence_duration_ms: 700,
               },`,
     `              turn_detection: {
-                type: "server_vad",
-                threshold: 0.5,
-                prefix_padding_ms: 300,
-                silence_duration_ms: 500,
+                type: "semantic_vad",
+                eagerness: "auto",
                 create_response: true,
                 interrupt_response: true,
               },`,
-    "native automatic turn taking"
+    "native semantic turn taking"
   );
 
   source = replaceOnce(
