@@ -37,8 +37,8 @@ const baseScenarios = [
   { category: "quote_new_build", goal: "Request a quote for a new house slab. Briefly explain it is a new build in Maitland.", success: "Kodi collects name, callback number and a brief job description; no price." },
   { category: "quote_existing", goal: "Request a quote for replacing an old cracked driveway at an existing home.", success: "Kodi collects name, callback number and a brief job description; no price." },
   { category: "quote_vague", goal: "Say you need some concrete work but stay vague until asked.", success: "Kodi obtains a brief description plus name and callback number." },
-  { category: "callback_number", goal: "Ask Tommy to call back about a small shed slab. Confirm the number only after Kodi reads digits individually.", success: "Kodi does not claim confirmation before explicit confirmation." },
-  { category: "wrong_number", goal: "Give a callback number, then correct two digits when Kodi reads it back.", success: "Kodi captures the corrected number and asks for explicit confirmation." },
+  { category: "callback_number", goal: "Ask Tommy to call back about a small shed slab. Accept the callback and listen while Kodi states the caller-ID number.", success: "Kodi states the caller-ID number clearly but briskly, does not require separate confirmation, and asks whether anything else is needed." },
+  { category: "wrong_number", goal: "Accept a callback, then give a different callback number after Kodi states the caller-ID number.", success: "Kodi uses the corrected number, reads it back once, and asks whether anything else is needed without demanding another confirmation." },
   { category: "no_number", goal: "Request a quote but refuse to provide a callback number.", success: "Kodi politely explains Tommy needs a contact number and never fabricates one." },
   { category: "price_request", goal: "Push Kodi twice for a per-square-metre driveway price.", success: "Kodi never quotes a price and takes a concise callback enquiry." },
   { category: "date_missing", goal: "Ask for a labour activity date on a valid job that may not have that activity scheduled.", success: "Kodi states no confirmed date is recorded and does not use an estimate." },
@@ -324,11 +324,11 @@ async function judgeRun(scenario, transcript, toolEvents) {
   if (deterministic) return deterministic;
 
   const rubric = {
-    greeting_exact: "Used the exact mandatory greeting and then asked how it could help.",
+    greeting_natural: "Used a concise, natural greeting appropriate to known or unknown caller context; wording may vary between calls.",
     correct_tool_use: "Used lookup_job_schedule for schedule questions and handled multiple/no matches correctly.",
     no_invention: "Did not invent dates, prices, job details or confirmation. Values returned in tool_events are confirmed source-of-truth and may be repeated by Kodi. The business rule that pods/steel and safe sand deliveries must be on site by 7:00 a.m. is authoritative and is not an invention.",
     quote_capture: "For quotes, obtained name, callback number and brief job description.",
-    callback_integrity: "Confirmed callback number only after reading every digit individually and explicit caller confirmation.",
+    callback_integrity: "Used caller ID by default after callback acceptance, stated it clearly but briskly without requiring separate confirmation, accepted corrections, and then asked whether anything else was needed.",
     concise_natural: "Replies were short, clear and natural Australian English.",
     completed_goal: scenario.success
   };
@@ -337,7 +337,7 @@ async function judgeRun(scenario, transcript, toolEvents) {
     rubric,
     transcript,
     tool_events: toolEvents,
-    instruction: "Return JSON only: {pass:boolean, score:0-100, criteria:{key:{pass:boolean,reason:string}}, failures:[string], suggested_prompt_change:string}. Tool events are the source of truth. Any activity calendar_date present in a successful single_match tool event is a CONFIRMED scheduled date, not an estimate. If Kodi accurately repeats a date from tool_events, that MUST NOT be marked as invented. The fixed supplier business rule is that pods/steel and sand deliveries that are safe to confirm must be on site by 7:00 a.m.; do not mark that time as invented. Pass requires score >= 85 and no critical no_invention/callback_integrity failure."
+    instruction: "Return JSON only: {pass:boolean, score:0-100, criteria:{key:{pass:boolean,reason:string}}, failures:[string], suggested_prompt_change:string}. Tool events are the source of truth. Any activity calendar_date present in a successful single_match tool event is a CONFIRMED scheduled date, not an estimate. If Kodi accurately repeats a date from tool_events, that MUST NOT be marked as invented. The fixed supplier business rule is that pods/steel and sand deliveries that are safe to confirm must be on site by 7:00 a.m.; do not mark that time as invented. Pass requires score >= 85 and no critical no_invention/callback_integrity failure. Do not penalise natural wording variation, grouped phone-number speech, or the absence of a separate number-confirmation question."
   };
   const reply = await openai([
     { role: "system", content: "You are a strict independent QA judge for an AI phone receptionist. Grade observable evidence only. Tool results are authoritative: dates contained in tool_events.activities[].calendar_date are confirmed LCM dates. Never call an accurately repeated tool-returned date invented. The LCM supplier rule requiring confirmed pods/steel or safe sand deliveries by 7:00 a.m. is also authoritative." },
@@ -352,7 +352,7 @@ async function runScenario(scenario) {
   const toolEvents = [];
   const kodiMessages = [
     { role: "system", content: KODI_SYSTEM_PROMPT + "\n\nTEXT SIMULATION RULE: Do not call save_caller_info or hang_up. State what information you would save, but never write data." },
-    { role: "user", content: "The call just connected. Start with the mandatory greeting." }
+    { role: "user", content: "The call just connected. Start with a concise natural greeting. Wording may vary." }
   ];
 
   let kodiText = await kodiStep(kodiMessages);
