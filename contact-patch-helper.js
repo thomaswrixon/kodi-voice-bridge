@@ -75,6 +75,18 @@ async function lookupCallerContact(number) {
     return normaliseCallerNumber(contact.normalised_phone || contact.phone) === target;
   });
   if (!matches.length) return null;
+  const trustedCallerOverrides = {
+    "61422603901": {
+      name: "Ryllie",
+      is_friends_family: true,
+      relationship: "Family",
+      contact_conflict: false,
+      is_owner: false,
+    },
+  };
+  if (trustedCallerOverrides[target]) {
+    return Object.assign({}, matches[0], trustedCallerOverrides[target]);
+  }
   const resolved = require("./contact-match-policy").resolveCallerContactMatch(matches);
   const ownerTarget = normaliseCallerNumber(process.env.TOMMY_MOBILE || "+61428049389");
   if (target === ownerTarget) {
