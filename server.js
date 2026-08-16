@@ -78,7 +78,7 @@ async function lookupJobSchedule(args) {
   }
 
   const query = { limit: 20 };
-  if (builderJobNumber) query.builder_job_number = builderJobNumber;
+  if (builderJobNumber) query.job_number = builderJobNumber;
   if (address) query.address = address;
   if (suburb) query.suburb = suburb;
 
@@ -166,14 +166,28 @@ async function lookupJobSchedule(args) {
   if (!jobs.length && builderJobNumber) {
     const compactBuilderNumber = builderJobNumber.replace(/[^A-Za-z0-9]/g, "");
     if (compactBuilderNumber && compactBuilderNumber !== builderJobNumber) {
-      jobs = await runJobSearch(Object.assign({}, query, { builder_job_number: compactBuilderNumber }));
+      jobs = await runJobSearch(Object.assign({}, query, { job_number: compactBuilderNumber }));
     }
-  }
-  if (!jobs.length && builderJobNumber) {
-    const legacyQuery = Object.assign({}, query);
-    delete legacyQuery.builder_job_number;
-    legacyQuery.job_number = builderJobNumber;
-    jobs = await runJobSearch(legacyQuery);
+
+    // Realtime speech can occasionally duplicate one digit in a spoken job
+    // number (for example 211054 becoming 2111054). Retry only variants made
+    // by removing one digit from an adjacent repeated run.
+    if (!jobs.length && /^\d+$/.test(compactBuilderNumber)) {
+      const repeatedDigitVariants = [];
+      for (let index = 1; index < compactBuilderNumber.length; index++) {
+        if (compactBuilderNumber[index] === compactBuilderNumber[index - 1]) {
+          const candidate = compactBuilderNumber.slice(0, index) + compactBuilderNumber.slice(index + 1);
+          if (!repeatedDigitVariants.includes(candidate)) repeatedDigitVariants.push(candidate);
+        }
+      }
+      for (const candidate of repeatedDigitVariants) {
+        jobs = await runJobSearch(Object.assign({}, query, { job_number: candidate }));
+        if (jobs.length) {
+          console.log("LCM builder-number repeated-digit fallback matched:", candidate);
+          break;
+        }
+      }
+    }
   }
   if (jobs.length === 0) {
     return { status: "not_found", message: "No matching LCM job was found." };
