@@ -16,8 +16,9 @@ function applySecurityPatches(source, replaceOnce) {
     `              transcription: {
                 model: "gpt-4o-mini-transcribe",
                 language: "en",
+                prompt: "Australian English. Transcribe speech in English only and preserve spoken numbers exactly.",
               },`,
-    "remove transcription prompt leakage"
+    "English transcription guidance"
   );
 
   source = replaceOnce(
@@ -76,7 +77,7 @@ function applySecurityPatches(source, replaceOnce) {
 `,
     `      if (msg.type === "conversation.item.input_audio_transcription.completed") {
         const callerTranscript = String(msg.transcript || "").trim();
-        const leakedTranscriptionPrompt = /Australian English phone call for Local Concreting Mate|Expected names include Tommy and Kodi/i.test(callerTranscript);
+        const leakedTranscriptionPrompt = /Australian English phone call for Local Concreting Mate|Expected names include Tommy and Kodi|Transcribe speech in English only|preserve spoken numbers exactly/i.test(callerTranscript);
         if (callerTranscript && !leakedTranscriptionPrompt) {
           transcript.push({ role: "user", content: callerTranscript });
         } else if (leakedTranscriptionPrompt) {
