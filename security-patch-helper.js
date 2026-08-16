@@ -281,6 +281,7 @@ function applySecurityPatches(source, replaceOnce) {
     source,
     `    if (msg.event === "media") {
       const payload = msg.media.payload;
+      console.log("Twilio inbound media: payloadLength=" + (payload ? payload.length : 0));
       if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
         openAiWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: payload }));
       } else {
@@ -306,7 +307,6 @@ function applySecurityPatches(source, replaceOnce) {
         // Strict half-duplex: never send Kodi's own loudspeaker audio back to OpenAI.
         return;
       }
-      console.log("Twilio inbound media: payloadLength=" + (payload ? payload.length : 0));
       if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
         openAiWs.send(JSON.stringify({ type: "input_audio_buffer.append", audio: payload }));
       } else {
