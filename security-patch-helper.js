@@ -258,6 +258,27 @@ function applySecurityPatches(source, replaceOnce) {
 
   source = replaceOnce(
     source,
+    "If a callback is needed, read this local-format number back digit by digit, beginning with 0 rather than +61, and ask the caller to confirm it.",
+    "If the caller accepts a callback, state the local-format caller-ID number clearly but briskly using natural grouping, then ask only whether there is anything else. Do not require confirmation. If the caller gives a different number, use that instead.",
+    "caller ID callback acceptance"
+  );
+
+  source = replaceOnce(
+    source,
+    'description: "MANDATORY: Save caller name, reason, and callback number. You MUST call this on every inbound call before hang_up. Use the inbound caller ID as the default callback number when available, confirm it by reading it back digit by digit, and only ask for a different number if caller ID is unavailable or the caller requests another number.",',
+    'description: "MANDATORY: Save caller name, reason, and callback number. You MUST call this on every inbound call before hang_up. Use inbound caller ID as the callback number when available. The caller does not need to confirm it: accepting the callback is sufficient. State it clearly and briskly, then ask whether there is anything else. Use a different number only if the caller supplies one.",',
+    "callback tool acceptance"
+  );
+
+  source = replaceOnce(
+    source,
+    'callback_number_confirmed: { type: "boolean", description: "True only when Kodi read the number digit by digit and the caller explicitly confirmed it." },',
+    'callback_number_confirmed: { type: "boolean", description: "Set true when the caller accepted a callback using the stated caller-ID number, or supplied a different callback number. A separate yes/no number confirmation is not required." },',
+    "callback accepted field"
+  );
+
+  source = replaceOnce(
+    source,
     `    if (msg.event === "media") {
       const payload = msg.media.payload;
       console.log("Twilio inbound media: payloadLength=" + (payload ? payload.length : 0));
