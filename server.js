@@ -272,7 +272,7 @@ async function lookupJobSchedule(args) {
     }
   });
   if (job.technical_specs && typeof job.technical_specs === "object") {
-    technicalSpecs.technical_specs = job.technical_specs;
+    Object.assign(technicalSpecs, job.technical_specs);
   }
   console.log("LCM matched job technical fields:", JSON.stringify(
     Object.keys(job).filter(function(key) { return /concrete|mix|mpa|strength|slab|garage/i.test(key); })
