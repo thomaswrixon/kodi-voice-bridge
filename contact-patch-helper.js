@@ -74,7 +74,6 @@ async function lookupCallerContact(number) {
   const matches = contacts.filter(function(contact) {
     return normaliseCallerNumber(contact.normalised_phone || contact.phone) === target;
   });
-  if (!matches.length) return null;
   const trustedCallerOverrides = {
     "61422603901": {
       name: "Ryllie",
@@ -85,8 +84,9 @@ async function lookupCallerContact(number) {
     },
   };
   if (trustedCallerOverrides[target]) {
-    return Object.assign({}, matches[0], trustedCallerOverrides[target]);
+    return Object.assign({}, matches[0] || {}, trustedCallerOverrides[target]);
   }
+  if (!matches.length) return null;
   const resolved = require("./contact-match-policy").resolveCallerContactMatch(matches);
   const ownerTarget = normaliseCallerNumber(process.env.TOMMY_MOBILE || "+61428049389");
   if (target === ownerTarget) {
