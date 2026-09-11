@@ -286,7 +286,7 @@ function applySecurityPatches(source, replaceOnce) {
     "remove per-packet outbound audio logging"
   );
 
-  return source;
+  return require("./call-audit-patches").applyCallAuditPatches(source, replaceOnce);
 }
 
 function installSecurityPatchWrapper() {
