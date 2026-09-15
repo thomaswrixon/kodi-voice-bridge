@@ -1,0 +1,115 @@
+openapi: 3.0.3
+info:
+  title: LCM Fleet GPS Gateway
+  version: 1.0.0
+  description: Read-only live fleet GPS API backed by the SinoTrack TCP proxy. Railway transports and parses GPS; Fleet Manager interprets the data.
+servers:
+  - url: https://sinotrack-gateway-production.up.railway.app
+security:
+  - FleetApiKey: []
+paths:
+  /api/status:
+    get:
+      operationId: getFleetGatewayStatus
+      summary: Check tracker gateway and SinoTrack upstream status
+      responses:
+        '200':
+          description: Gateway status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /api/trackers:
+    get:
+      operationId: listTrackers
+      summary: List all trackers and their latest known state
+      responses:
+        '200':
+          description: Tracker list
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /api/trackers/{trackerId}:
+    get:
+      operationId: getTracker
+      summary: Get the latest state for one tracker
+      parameters:
+        - name: trackerId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Latest tracker state
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Tracker not found
+  /api/trackers/{trackerId}/history:
+    get:
+      operationId: getTrackerHistory
+      summary: Get recent in-memory location history for one tracker
+      parameters:
+        - name: trackerId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 300
+            default: 100
+      responses:
+        '200':
+          description: Recent tracker history
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /api/events:
+    get:
+      operationId: getFleetEvents
+      summary: Get movement, GPS fix and connection events after a sequence number
+      parameters:
+        - name: after
+          in: query
+          required: false
+          description: Return events with seq greater than this value.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        '200':
+          description: Event stream page
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+components:
+  securitySchemes:
+    FleetApiKey:
+      type: apiKey
+      in: header
+      name: X-Fleet-Api-Key
