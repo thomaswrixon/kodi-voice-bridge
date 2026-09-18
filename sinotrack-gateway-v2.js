@@ -134,7 +134,7 @@ function updateTracker(packet, peer) {
 
   trackers.set(id, next);
 
-  if (!prev.last_seen_at) addEvent('tracker_seen', id, { peer });
+  if (!prev.last_seen_at) {\n    log(`Tracker identified: ${id} type=${packet.packet_type || 'unknown'} lat=${packet.latitude ?? 'n/a'} lon=${packet.longitude ?? 'n/a'} speed=${packet.speed_value ?? 'n/a'}`);\n    addEvent('tracker_seen', id, { peer });\n  }
   if (previousMovement && packet.movement_state && previousMovement !== packet.movement_state) {
     addEvent(packet.movement_state === 'moving' ? 'movement_started' : 'movement_stopped', id, {
       latitude: packet.latitude,
