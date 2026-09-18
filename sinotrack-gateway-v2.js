@@ -25,6 +25,8 @@ let bytesFromTrackers = 0;
 let bytesFromSinoTrack = 0;
 let lastPacketAt = null;
 let lastUpstreamError = null;
+let upstreamDebugChunks = 0;
+let trackerDebugChunks = 0;
 
 function log(...args) { console.log(new Date().toISOString(), ...args); }
 function safeNumber(v) {
@@ -195,8 +197,20 @@ const tcp = net.createServer(trackerSocket => {
   trackerSocket.pipe(upstream);
   upstream.pipe(trackerSocket);
 
-  trackerSocket.on('data', chunk => processTrackerData(chunk, peer, state));
-  upstream.on('data', chunk => { bytesFromSinoTrack += chunk.length; });
+  trackerSocket.on('data', chunk => {
+    if (trackerDebugChunks < 5) {
+      trackerDebugChunks++;
+      log('DEBUG tracker->proxy:', chunk.toString('utf8').slice(0, 500));
+    }
+    processTrackerData(chunk, peer, state);
+  });
+  upstream.on('data', chunk => {
+    bytesFromSinoTrack += chunk.length;
+    if (upstreamDebugChunks < 5) {
+      upstreamDebugChunks++;
+      log('DEBUG sinotrack->proxy:', chunk.toString('utf8').slice(0, 500));
+    }
+  });
 
   upstream.on('connect', () => {
     lastUpstreamError = null;
