@@ -2,6 +2,8 @@
 
 const net = require('net');
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { URL } = require('url');
 
 const GPS_PORT = Number(process.env.GPS_PORT || 8090);
@@ -270,6 +272,21 @@ const server = http.createServer((req, res) => {
   let url;
   try { url = new URL(req.url, `http://${req.headers.host || 'localhost'}`); }
   catch { return json(res, 400, { ok: false, error: 'bad_url' }); }
+
+  if (req.method === 'GET' && (url.pathname === '/openapi.yaml' || url.pathname === '/openapi.yml')) {
+    try {
+      const spec = fs.readFileSync(path.join(__dirname, 'sinotrack-fleet-api.openapi.yaml'), 'utf8');
+      res.writeHead(200, {
+        'Content-Type': 'application/yaml; charset=utf-8',
+        'Cache-Control': 'public, max-age=300',
+        'Access-Control-Allow-Origin': '*'
+      });
+      res.end(spec);
+    } catch (error) {
+      json(res, 500, { ok: false, error: 'openapi_unavailable' });
+    }
+    return;
+  }
 
   if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
     return json(res, 200, {
