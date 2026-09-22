@@ -14,6 +14,10 @@ const FLEET_API_KEY = process.env.FLEET_API_KEY || '';
 const HISTORY_LIMIT = Math.max(20, Math.min(Number(process.env.HISTORY_LIMIT || 300), 2000));
 const EVENT_LIMIT = Math.max(100, Math.min(Number(process.env.EVENT_LIMIT || 2000), 10000));
 const SPEED_STOP_THRESHOLD = Number(process.env.SPEED_STOP_THRESHOLD || 1);
+const MOVE_DISTANCE_METERS = Math.max(5, Number(process.env.MIN_MOVE_METERS || 20));
+const MOVE_WINDOW_METERS = Math.max(MOVE_DISTANCE_METERS, Number(process.env.MOVE_WINDOW_METERS || 35));
+const MOVE_WINDOW_MS = Math.max(30000, Number(process.env.MOVE_WINDOW_MS || 90000));
+const STOP_CONFIRM_MS = Math.max(60000, Number(process.env.STOP_CONFIRM_MS || 120000));
 
 const trackers = new Map();
 const events = [];
@@ -27,8 +31,6 @@ let bytesFromTrackers = 0;
 let bytesFromSinoTrack = 0;
 let lastPacketAt = null;
 let lastUpstreamError = null;
-let debugUpstreamChunks = 0;
-let debugTrackerChunks = 0;
 
 function log(...args) { console.log(new Date().toISOString(), ...args); }
 function safeNumber(v) {
@@ -54,8 +56,69 @@ function deviceTime(hhmmss, ddmmyy) {
   const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
-function movementState(speed) {
-  return Number.isFinite(speed) && speed > SPEED_STOP_THRESHOLD ? 'moving' : 'stopped';
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return 0;
+  const toRad = d => d * Math.PI / 180;
+  const R = 6371000;
+  const p1 = toRad(lat1), p2 = toRad(lat2);
+  const dp = toRad(lat2 - lat1);
+  const dl = toRad(lon2 - lon1);
+  const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function deriveMovement(prev, packet) {
+  const nowMs = Date.parse(packet.received_at) || Date.now();
+  const history = Array.isArray(prev.history) ? prev.history : [];
+  const validHistory = history.filter(h => Number.isFinite(h.latitude) && Number.isFinite(h.longitude));
+
+  const last = validHistory.length ? validHistory[validHistory.length - 1] : null;
+  let stepDistanceMeters = 0;
+  let derivedSpeedKmh = 0;
+
+  if (last && Number.isFinite(packet.latitude) && Number.isFinite(packet.longitude)) {
+    stepDistanceMeters = haversineMeters(last.latitude, last.longitude, packet.latitude, packet.longitude);
+    const lastMs = Date.parse(last.at || last.device_time_utc || '');
+    const dtSeconds = Number.isFinite(lastMs) && lastMs < nowMs ? (nowMs - lastMs) / 1000 : 0;
+    if (dtSeconds > 0 && dtSeconds <= 180) {
+      derivedSpeedKmh = (stepDistanceMeters / dtSeconds) * 3.6;
+    }
+  }
+
+  const recent = validHistory.filter(h => {
+    const t = Date.parse(h.at || h.device_time_utc || '');
+    return Number.isFinite(t) && nowMs - t <= MOVE_WINDOW_MS;
+  });
+  const oldestRecent = recent[0] || last;
+  const windowDistanceMeters = oldestRecent && Number.isFinite(packet.latitude) && Number.isFinite(packet.longitude)
+    ? haversineMeters(oldestRecent.latitude, oldestRecent.longitude, packet.latitude, packet.longitude)
+    : 0;
+
+  const reportedMoving = Number.isFinite(packet.speed_value) && packet.speed_value > SPEED_STOP_THRESHOLD;
+  const coordinateMoving =
+    (stepDistanceMeters >= MOVE_DISTANCE_METERS && derivedSpeedKmh >= 2) ||
+    windowDistanceMeters >= MOVE_WINDOW_METERS;
+
+  const movingEvidence = reportedMoving || coordinateMoving;
+  const lastMovementAtMs = movingEvidence
+    ? nowMs
+    : (Date.parse(prev.last_movement_at || '') || 0);
+
+  let state = 'stopped';
+  if (movingEvidence) {
+    state = 'moving';
+  } else if (prev.movement_state === 'moving' && lastMovementAtMs && nowMs - lastMovementAtMs < STOP_CONFIRM_MS) {
+    state = 'moving';
+  }
+
+  return {
+    movement_state: state,
+    derived_speed_kmh: Number(derivedSpeedKmh.toFixed(1)),
+    step_distance_m: Number(stepDistanceMeters.toFixed(1)),
+    window_distance_m: Number(windowDistanceMeters.toFixed(1)),
+    last_movement_at: lastMovementAtMs ? new Date(lastMovementAtMs).toISOString() : null,
+    movement_source: reportedMoving ? 'reported_speed' : coordinateMoving ? 'gps_displacement' : state === 'moving' ? 'stop_grace' : 'stationary',
+  };
 }
 function parsePacket(rawMessage) {
   const raw = String(rawMessage || '').trim();
@@ -87,8 +150,7 @@ function parsePacket(rawMessage) {
     speed_value: speed,
     heading_degrees: safeNumber(p[o + 7]),
     vehicle_status_hex: String(p[o + 9] || '').toUpperCase(),
-    device_time_utc: deviceTime(p[o], p[o + 8]),
-    movement_state: movementState(speed)
+    device_time_utc: deviceTime(p[o], p[o + 8])
   };
 }
 
@@ -110,10 +172,12 @@ function updateTracker(packet, peer) {
   const prev = trackers.get(id) || { tracker_id: id, history: [] };
   const previousMovement = prev.movement_state || null;
   const previousFix = prev.fix_valid;
+  const movement = deriveMovement(prev, packet);
 
   const next = {
     ...prev,
     ...packet,
+    ...movement,
     peer,
     first_seen_at: prev.first_seen_at || packet.received_at,
     last_seen_at: packet.received_at,
@@ -130,7 +194,10 @@ function updateTracker(packet, peer) {
       speed_value: packet.speed_value,
       heading_degrees: packet.heading_degrees,
       fix_valid: packet.fix_valid,
-      movement_state: packet.movement_state,
+      movement_state: movement.movement_state,
+      derived_speed_kmh: movement.derived_speed_kmh,
+      step_distance_m: movement.step_distance_m,
+      movement_source: movement.movement_source,
       vehicle_status_hex: packet.vehicle_status_hex || ''
     });
     if (next.history.length > HISTORY_LIMIT) next.history.splice(0, next.history.length - HISTORY_LIMIT);
@@ -142,11 +209,13 @@ function updateTracker(packet, peer) {
     log(`Tracker identified: ${id} type=${packet.packet_type || 'unknown'} lat=${packet.latitude ?? 'n/a'} lon=${packet.longitude ?? 'n/a'} speed=${packet.speed_value ?? 'n/a'}`);
     addEvent('tracker_seen', id, { peer });
   }
-  if (previousMovement && packet.movement_state && previousMovement !== packet.movement_state) {
-    addEvent(packet.movement_state === 'moving' ? 'movement_started' : 'movement_stopped', id, {
+  if (previousMovement && movement.movement_state && previousMovement !== movement.movement_state) {
+    addEvent(movement.movement_state === 'moving' ? 'movement_started' : 'movement_stopped', id, {
       latitude: packet.latitude,
       longitude: packet.longitude,
-      speed_value: packet.speed_value
+      speed_value: packet.speed_value,
+      derived_speed_kmh: movement.derived_speed_kmh,
+      movement_source: movement.movement_source
     });
   }
   if (previousFix !== undefined && packet.fix_valid !== undefined && previousFix !== packet.fix_valid) {
@@ -199,22 +268,8 @@ const tcp = net.createServer(trackerSocket => {
   trackerSocket.pipe(upstream);
   upstream.pipe(trackerSocket);
 
-  trackerSocket.on('data', chunk => {
-    if (debugTrackerChunks < 4) {
-      debugTrackerChunks++;
-      log('DEBUG TRACKER TX ASCII:', JSON.stringify(chunk.toString('utf8').slice(0, 500)));
-      log('DEBUG TRACKER TX HEX:', chunk.subarray(0, 250).toString('hex'));
-    }
-    processTrackerData(chunk, peer, state);
-  });
-  upstream.on('data', chunk => {
-    bytesFromSinoTrack += chunk.length;
-    if (debugUpstreamChunks < 4) {
-      debugUpstreamChunks++;
-      log('DEBUG SINOTRACK RX ASCII:', JSON.stringify(chunk.toString('utf8').slice(0, 500)));
-      log('DEBUG SINOTRACK RX HEX:', chunk.subarray(0, 250).toString('hex'));
-    }
-  });
+  trackerSocket.on('data', chunk => processTrackerData(chunk, peer, state));
+  upstream.on('data', chunk => { bytesFromSinoTrack += chunk.length; });
 
   upstream.on('connect', () => {
     lastUpstreamError = null;
